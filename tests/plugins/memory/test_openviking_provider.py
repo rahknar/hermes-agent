@@ -725,7 +725,141 @@ def test_get_tool_schemas_omits_profile_and_keeps_narrow_forget_tools():
     names = [schema["name"] for schema in provider.get_tool_schemas()]
 
     assert "viking_profile" not in names
+    assert "viking_remove_memory_text" in names
     assert "viking_forget" in names
+
+def test_system_prompt_block_preserves_current_state_and_removal_authority():
+    provider = OpenVikingMemoryProvider()
+    provider._ensure_client = lambda: True
+    provider._endpoint = "http://openviking.test:1933"
+    provider._client = MagicMock()
+    provider._client.get.return_value = {
+        "result": [{"name": "memories"}]
+    }
+
+    block = provider.system_prompt_block()
+
+    assert "Treat event memories as historical evidence only." in block
+    assert (
+        "Never promote a historical event into current truth when current-state "
+        "memory is absent, empty, or contradictory."
+    ) in block
+    assert "If no current value is stored, say so explicitly." in block
+
+    assert "copy the exact stored text verbatim" in block
+    assert "viking_remove_memory_text" in block
+    assert (
+        "Do not switch to a historical event or another memory merely "
+        "because current-state removal failed."
+    ) in block
+
+    assert "Historical event records remain history unless the user explicitly asks" in block
+    assert "Use viking_forget only to delete an entire exact memory file URI" in block
+
+def test_remove_memory_text_refuses_missing_exact_text():
+    provider = OpenVikingMemoryProvider()
+    provider._client = MagicMock()
+    provider._client.get.return_value = {
+        "result": {"content": "alpha\nbeta\ngamma\n"}
+    }
+
+    result = json.loads(
+        provider._tool_remove_memory_text(
+            {
+                "uri": "viking://user/alice/memories/preferences/test.md",
+                "text": "delta",
+            }
+        )
+    )
+
+    assert "error" in result
+    assert "Exact text was not found" in result["error"]
+    provider._client.mcp_call.assert_not_called()
+
+
+def test_remove_memory_text_refuses_ambiguous_exact_text():
+    provider = OpenVikingMemoryProvider()
+    provider._client = MagicMock()
+    provider._client.get.return_value = {
+        "result": {"content": "alpha\nbeta\nalpha\n"}
+    }
+
+    result = json.loads(
+        provider._tool_remove_memory_text(
+            {
+                "uri": "viking://user/alice/memories/preferences/test.md",
+                "text": "alpha",
+            }
+        )
+    )
+
+    assert "error" in result
+    assert "occurs 2 times" in result["error"]
+    provider._client.mcp_call.assert_not_called()
+
+
+def test_remove_memory_text_edits_one_exact_match_and_verifies():
+    provider = OpenVikingMemoryProvider()
+    provider._client = MagicMock()
+    uri = "viking://user/alice/memories/preferences/test.md"
+    text = "- Favorite editor: VS Code\n"
+
+    provider._client.get.side_effect = [
+        {"result": {"content": f"Preferences\n{text}Other fact\n"}},
+        {"result": {"content": "Preferences\nOther fact\n"}},
+    ]
+
+    result = json.loads(
+        provider._tool_remove_memory_text(
+            {
+                "uri": uri,
+                "text": text,
+            }
+        )
+    )
+
+    provider._client.mcp_call.assert_called_once_with(
+        "edit",
+        {
+            "uri": uri,
+            "old_string": text,
+            "new_string": "",
+            "replace_all": False,
+            "wait": True,
+        },
+    )
+
+    assert result == {
+        "status": "removed",
+        "uri": uri,
+        "removed_text": text,
+        "verified": True,
+    }
+
+
+def test_remove_memory_text_fails_when_verification_still_contains_text():
+    provider = OpenVikingMemoryProvider()
+    provider._client = MagicMock()
+    uri = "viking://user/alice/memories/preferences/test.md"
+    text = "remove exactly this"
+
+    provider._client.get.side_effect = [
+        {"result": {"content": f"before {text} after"}},
+        {"result": {"content": f"before {text} after"}},
+    ]
+
+    result = json.loads(
+        provider._tool_remove_memory_text(
+            {
+                "uri": uri,
+                "text": text,
+            }
+        )
+    )
+
+    provider._client.mcp_call.assert_called_once()
+    assert "error" in result
+    assert "verification still found the exact text" in result["error"]
 
 
 def test_viking_client_delete_uses_identity_headers(monkeypatch):
@@ -736,6 +870,193 @@ def test_viking_client_delete_uses_identity_headers(monkeypatch):
         user="alice",
         agent="hermes",
     )
+    captured = {}
+
+    def capture_delete(url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(
+            status_code=200,
+            text="",
+            json=lambda: {
+                "status": "ok",
+                "result": {"uri": "viking://~/memories/x.md"},
+            },
+            raise_for_status=lambda: None,
+        )
+
+    monkeypatch.setattr(client._httpx, "delete", capture_delete)
+
+    assert client.delete(
+        "/api/v1/fs",
+        params={"uri": "viking://~/memories/x.md"},
+    ) == {
+        "status": "ok",
+        "result": {"uri": "viking://~/memories/x.md"},
+    }
+    assert captured["url"] == "https://example.com/api/v1/fs"
+    assert captured["kwargs"]["params"] == {
+        "uri": "viking://~/memories/x.md"
+    }
+    assert captured["kwargs"]["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["kwargs"]["headers"]["X-OpenViking-Actor-Peer"] == "hermes"
+    assert captured["kwargs"]["headers"]["User-Agent"] == _EXPECTED_USER_AGENT
+
+
+def test_viking_client_mcp_call_accepts_sse_response(monkeypatch):
+    client = _VikingClient(
+        "https://example.com",
+        api_key="test-key",
+        account="acct",
+        user="alice",
+        agent="hermes",
+    )
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"content": [{"type": "text", "text": "edited"}]},
+    }
+
+    def capture_post(url, **kwargs):
+        return SimpleNamespace(
+            status_code=200,
+            text=f"event: message\ndata: {json.dumps(payload)}\n\n",
+            headers={"content-type": "text/event-stream"},
+            json=lambda: (_ for _ in ()).throw(ValueError("not JSON response")),
+        )
+
+    monkeypatch.setattr(client._httpx, "post", capture_post)
+
+    result = client.mcp_call("edit", {"uri": "viking://user/alice/memories/x.md"})
+
+    assert result == payload
+
+
+def test_viking_client_mcp_call_surfaces_tool_error(monkeypatch):
+    client = _VikingClient(
+        "https://example.com",
+        api_key="test-key",
+        account="acct",
+        user="alice",
+        agent="hermes",
+    )
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "isError": True,
+            "content": [{"type": "text", "text": "edit refused"}],
+        },
+    }
+
+    def capture_post(url, **kwargs):
+        return SimpleNamespace(
+            status_code=200,
+            text=json.dumps(payload),
+            headers={"content-type": "application/json"},
+            json=lambda: payload,
+        )
+
+    monkeypatch.setattr(client._httpx, "post", capture_post)
+
+    with pytest.raises(RuntimeError, match="edit refused"):
+        client.mcp_call("edit", {"uri": "viking://user/alice/memories/x.md"})
+
+def test_remove_memory_text_rejects_invalid_memory_uri():
+    provider = OpenVikingMemoryProvider()
+    provider._client = MagicMock()
+
+    result = json.loads(
+        provider._tool_remove_memory_text(
+            {
+                "uri": "https://example.com/not-memory.md",
+                "text": "remove me",
+            }
+        )
+    )
+
+    assert "error" in result
+    provider._client.get.assert_not_called()
+    provider._client.mcp_call.assert_not_called()
+
+
+def test_remove_memory_text_rejects_whitespace_only_text():
+    provider = OpenVikingMemoryProvider()
+    provider._client = MagicMock()
+
+    result = json.loads(
+        provider._tool_remove_memory_text(
+            {
+                "uri": "viking://user/alice/memories/preferences/test.md",
+                "text": "   \n\t",
+            }
+        )
+    )
+
+    assert "error" in result
+    assert "non-whitespace" in result["error"]
+    provider._client.get.assert_not_called()
+    provider._client.mcp_call.assert_not_called()
+
+
+def test_remove_memory_text_fails_when_verification_read_is_unusable():
+    provider = OpenVikingMemoryProvider()
+    provider._client = MagicMock()
+    uri = "viking://user/alice/memories/preferences/test.md"
+    text = "remove exactly this"
+
+    provider._client.get.side_effect = [
+        {"result": {"content": f"before {text} after"}},
+        {"result": None},
+    ]
+
+    result = json.loads(
+        provider._tool_remove_memory_text(
+            {
+                "uri": uri,
+                "text": text,
+            }
+        )
+    )
+
+    provider._client.mcp_call.assert_called_once()
+    assert "error" in result
+    assert "verification read failed" in result["error"]
+
+
+def test_viking_client_mcp_call_surfaces_jsonrpc_error(monkeypatch):
+    client = _VikingClient(
+        "https://example.com",
+        api_key="test-key",
+        account="acct",
+        user="alice",
+        agent="hermes",
+    )
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {
+            "code": -32603,
+            "message": "edit failed",
+        },
+    }
+
+    def capture_post(url, **kwargs):
+        return SimpleNamespace(
+            status_code=200,
+            text=json.dumps(payload),
+            headers={"content-type": "application/json"},
+            json=lambda: payload,
+        )
+
+    monkeypatch.setattr(client._httpx, "post", capture_post)
+
+    with pytest.raises(RuntimeError, match="OpenViking MCP error"):
+        client.mcp_call("edit", {"uri": "viking://user/alice/memories/x.md"})
+
     captured = {}
 
     def capture_delete(url, **kwargs):
