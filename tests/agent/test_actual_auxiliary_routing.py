@@ -11,6 +11,21 @@ import pytest
 import yaml
 
 
+@pytest.fixture(autouse=True)
+def _isolate_config_path_caches():
+    import hermes_cli.config as config_mod
+
+    config_mod._LOAD_CONFIG_CACHE.clear()
+    config_mod._LAST_EXPANDED_CONFIG_BY_PATH.clear()
+    config_mod._RAW_CONFIG_CACHE.clear()
+    try:
+        yield
+    finally:
+        config_mod._LOAD_CONFIG_CACHE.clear()
+        config_mod._LAST_EXPANDED_CONFIG_BY_PATH.clear()
+        config_mod._RAW_CONFIG_CACHE.clear()
+
+
 @pytest.fixture
 def actual_endpoint(monkeypatch):
     from agent.auxiliary_client import (

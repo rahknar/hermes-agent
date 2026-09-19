@@ -12,43 +12,13 @@ gets stripped from the durable transcript. This test file verifies:
   - The JSON log drops only the nudge, keeping the assistant candidate.
 """
 
-import sys
 from unittest.mock import MagicMock
 
-import pytest
-
-
-@pytest.fixture(autouse=True)
-def _restore_sys_modules():
-    """``_fresh_run_agent`` wipes the agent stack out of ``sys.modules``. Put the original
-    module objects back afterwards: sibling test files hold module-level references into
-    ``hermes_cli.*`` / ``tools.*`` and their monkeypatches would otherwise land on modules
-    the app no longer imports."""
-    saved = dict(sys.modules)
-    yield
-    _restore_modules(saved)
-
-
-def _restore_modules(saved):
-    sys.modules.clear()
-    sys.modules.update(saved)
-    # Re-imports rebound ``pkg.<child>`` attributes to the fresh module objects; point them
-    # back so ``from pkg import child`` and ``sys.modules["pkg.child"]`` agree again.
-    for name, mod in saved.items():
-        parent, _, child = name.rpartition(".")
-        if parent and parent in saved:
-            try:
-                setattr(saved[parent], child, mod)
-            except Exception:
-                pass
 
 
 def _fresh_run_agent(hermes_home):
-    for mod in list(sys.modules):
-        if mod == "run_agent" or mod.startswith("agent.") or mod.startswith("tools.") or mod.startswith("hermes_"):
-            del sys.modules[mod]
-    import run_agent  # noqa: F401
-    return sys.modules["run_agent"]
+    import run_agent
+    return run_agent
 
 
 def test_verification_flags_registered_as_ephemeral(tmp_path, monkeypatch):

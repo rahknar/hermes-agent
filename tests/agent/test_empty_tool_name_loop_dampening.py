@@ -134,12 +134,6 @@ def agent_env():
     prev_home = os.environ.get("HERMES_HOME")
     os.environ["HERMES_HOME"] = os.path.join(test_home, ".hermes")
 
-    # Import fresh so the patched conversation_loop is exercised even when the
-    # module was imported earlier in the same worker.
-    saved_modules = dict(sys.modules)  # restored in finally — see below
-    for mod in list(sys.modules):
-        if mod == "run_agent" or mod.startswith("agent.") or mod.startswith("tools.") or mod.startswith("hermes_"):
-            del sys.modules[mod]
     from run_agent import AIAgent
 
     agent = AIAgent(
@@ -156,18 +150,6 @@ def agent_env():
     finally:
         srv.shutdown()
         shutil.rmtree(test_home, ignore_errors=True)
-        # Put the original module objects back: sibling test files hold module-level
-        # references into hermes_cli.*/tools.* and their monkeypatches would otherwise
-        # land on modules the app no longer imports.
-        sys.modules.clear()
-        sys.modules.update(saved_modules)
-        for _name, _mod in saved_modules.items():
-            _parent, _, _child = _name.rpartition(".")
-            if _parent and _parent in saved_modules:
-                try:
-                    setattr(saved_modules[_parent], _child, _mod)
-                except Exception:
-                    pass
         if prev_home is None:
             os.environ.pop("HERMES_HOME", None)
         else:

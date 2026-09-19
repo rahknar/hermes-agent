@@ -23,8 +23,20 @@ Scenario:
 
 from __future__ import annotations
 
+import time as _real_time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+
+class _NoSleepTime:
+    """Module-local time proxy that suppresses sleep without mutating stdlib time."""
+
+    def __getattr__(self, name):
+        return getattr(_real_time, name)
+
+    @staticmethod
+    def sleep(*_args, **_kwargs):
+        return None
 
 from agent.turn_retry_state import TurnRetryState
 from run_agent import AIAgent
@@ -265,7 +277,7 @@ class TestFallbackChainResetOnTransportRecovery:
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
             patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()),
-            patch("agent.agent_runtime_helpers.time.sleep"),
+            patch("agent.agent_runtime_helpers.time", _NoSleepTime()),
             patch(
                 "agent.auxiliary_client.resolve_provider_client",
                 return_value=(mock_fb_client, "glm-4.7"),
