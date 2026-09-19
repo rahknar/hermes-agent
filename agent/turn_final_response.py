@@ -14,13 +14,14 @@ from typing import Any, Dict, Optional
 from agent.message_metadata import append_message
 from agent.turn_empty_response import recover_empty_response
 from agent.turn_stop_gates import apply_stop_gates
+from agent.delegation_context import is_delegated_child_context
 
 logger = logging.getLogger("agent.conversation_loop")
 
 # Ephemeral retry scaffolding rows popped before the final answer becomes durable.
 _EPHEMERAL_SCAFFOLDING_FLAGS = (
     "_thinking_prefill", "_empty_recovery_synthetic", "_empty_terminal_sentinel",
-    "_dropped_toolcall_nudge",
+    "_dropped_toolcall_nudge", "_zero_tool_textual_call_nudge",
 )
 
 
@@ -36,6 +37,7 @@ class FinalResponseVerdict:
     _turn_exit_reason: Any
     _preflight_compression_blocked: Any
     codex_ack_continuations: Any
+    zero_tool_textual_call_continuations: Any
     truncated_response_parts: Any
     length_continue_retries: Any
     _pending_verification_response: Any
@@ -48,7 +50,7 @@ def finish_text_response(
     api_messages: Any, conversation_history: Any, api_call_count: Any, user_message: Any,
     active_system_prompt: Any, final_response: Any, _turn_exit_reason: Any,
     _preflight_compression_blocked: Any, codex_ack_continuations: Any,
-    truncated_response_parts: Any, length_continue_retries: Any,
+    zero_tool_textual_call_continuations: Any, truncated_response_parts: Any, length_continue_retries: Any,
     _pending_verification_response: Any, _pending_verification_response_previewed: Any,
 ) -> FinalResponseVerdict:
     """Finish (or defer) a text-only assistant response in the original guard order. Every
@@ -56,7 +58,8 @@ def finish_text_response(
     iteration-limit summarization; the final message is appended and flushed only after the
     stop gates accept it."""
     from agent.conversation_loop import (
-        _CODEX_ACK_CONTINUATION_NUDGE, _DROPPED_TOOLCALL_NUDGE_CONTENT, _join_truncated_parts
+        _CODEX_ACK_CONTINUATION_NUDGE, _DROPPED_TOOLCALL_NUDGE_CONTENT,
+        _ZERO_TOOL_TEXTUAL_CALL_NUDGE_CONTENT, _join_truncated_parts
     )
 
     def _verdict(action: str, result: Optional[Dict[str, Any]] = None) -> FinalResponseVerdict:
@@ -65,6 +68,7 @@ def finish_text_response(
             _turn_exit_reason=_turn_exit_reason,
             _preflight_compression_blocked=_preflight_compression_blocked,
             codex_ack_continuations=codex_ack_continuations,
+            zero_tool_textual_call_continuations=zero_tool_textual_call_continuations,
             truncated_response_parts=truncated_response_parts,
             length_continue_retries=length_continue_retries,
             _pending_verification_response=_pending_verification_response,
@@ -163,6 +167,37 @@ def finish_text_response(
             if isinstance(_frag, dict):
                 _frag.pop("_length_continuation_fragment", None)
                 _frag.pop("_length_continuation_nudge", None)
+
+    # Delegated-child textual tool-call recovery. A child with no authorized tools
+    # can emit learned <tool_call>...</tool_call> markup as plain text. Inspect the
+    # raw response before _strip_think_blocks() removes that markup; otherwise a
+    # planning preamble can be mistaken for a successful delegated-task result.
+    _zero_tool_child_textual_call = (
+        is_delegated_child_context()
+        and not getattr(agent, "valid_tool_names", set())
+        and "<tool_call>" in (final_response or "").lower()
+        and "</tool_call>" in (final_response or "").lower()
+    )
+
+    if _zero_tool_child_textual_call and zero_tool_textual_call_continuations < 1:
+        zero_tool_textual_call_continuations += 1
+        logger.warning(
+            "Delegated child with no authorized tools emitted textual "
+            "<tool_call> markup — re-prompting for direct answer"
+        )
+
+        interim_msg = agent._build_assistant_message(assistant_message, "incomplete")
+        interim_msg["_zero_tool_textual_call_nudge"] = True
+        append_message(messages, interim_msg)
+
+        append_message(messages, {
+            "role": "user",
+            "content": _ZERO_TOOL_TEXTUAL_CALL_NUDGE_CONTENT,
+            "_zero_tool_textual_call_nudge": True,
+        })
+        agent._session_messages = messages
+        final_response = None
+        return _verdict("continue")
 
     final_response = agent._strip_think_blocks(final_response).strip()
 

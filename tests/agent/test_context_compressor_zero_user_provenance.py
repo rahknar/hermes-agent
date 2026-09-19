@@ -328,6 +328,13 @@ def test_background_process_notifications_do_not_become_compaction_anchors(
             id="dropped_toolcall_nudge",
         ),
         pytest.param(
+            "No tools are available for this delegated task. "
+            "Do not emit tool-call markup or announce actions requiring tools. "
+            "Complete the assigned task directly from the information already "
+            "provided and return the substantive result now.",
+            id="zero_tool_textual_call_nudge",
+        ),
+        pytest.param(
             "You just executed tool calls but returned an "
             "empty response. Please process the tool "
             "results above and continue with the task.",

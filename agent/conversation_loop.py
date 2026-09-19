@@ -868,6 +868,16 @@ _DROPPED_TOOLCALL_NUDGE_CONTENT = (
     "restate intent — issue the actual tool call now to continue the task."
 )
 
+# Re-prompt when a delegated child has no authorized tools but emits learned textual
+# <tool_call> markup. Metadata does not survive SessionDB projection, so compressor
+# scaffolding recognition also matches this exact content.
+_ZERO_TOOL_TEXTUAL_CALL_NUDGE_CONTENT = (
+    "No tools are available for this delegated task. "
+    "Do not emit tool-call markup or announce actions requiring tools. "
+    "Complete the assigned task directly from the information already "
+    "provided and return the substantive result now."
+)
+
 # Re-prompt for an empty response after tool calls (#9400); the metadata flag does not
 # survive SessionDB projection, so it is matched by content.
 _EMPTY_TOOL_RESPONSE_NUDGE = (
@@ -1306,6 +1316,7 @@ class _LoopState:
     interrupted: bool = False
     failed: bool = False
     codex_ack_continuations: int = 0
+    zero_tool_textual_call_continuations: int = 0
     length_continue_retries: int = 0
     # Per-turn backstop for the refunding restarts (redirect / rebuilt-for-fallback).
     # Unlike ``retry_count`` (rebound to 0 each iteration) this accumulates for the whole
