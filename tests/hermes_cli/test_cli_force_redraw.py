@@ -368,7 +368,7 @@ class TestFirstSigwinchBaseline:
         monkeypatch.setattr(
             cli_mod.shutil,
             "get_terminal_size",
-            lambda _default: os_mod.terminal_size((97, 40)),
+            lambda *args, **kwargs: os_mod.terminal_size((97, 40)),
         )
 
         bare_cli._install_resize_recovery(app)
@@ -381,7 +381,12 @@ class TestFirstSigwinchBaseline:
         app = MagicMock()
         app.output.get_size.side_effect = RuntimeError("not attached")
 
-        def _boom(_default):
+        real_get_terminal_size = cli_mod.shutil.get_terminal_size
+
+        def _boom(*args, **kwargs):
+            monkeypatch.setattr(
+                cli_mod.shutil, "get_terminal_size", real_get_terminal_size
+            )
             raise RuntimeError("no tty")
 
         monkeypatch.setattr(cli_mod.shutil, "get_terminal_size", _boom)

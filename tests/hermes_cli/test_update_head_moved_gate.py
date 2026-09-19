@@ -10,10 +10,12 @@ and fails loudly when the update was a no-op.
 """
 
 from types import SimpleNamespace
+import shutil
 
 import pytest
 
 from hermes_cli import main as hermes_main
+from hermes_cli import managed_uv
 import hermes_cli.main_web_build as main_web_build
 import hermes_cli.main_install_repair as main_install_repair
 from hermes_cli import update_cmd
@@ -77,6 +79,9 @@ def _patch_update_deps(monkeypatch, tmp_path, run_side_effect):
     """
     monkeypatch.setattr(hermes_main.subprocess, "run", run_side_effect)
     monkeypatch.setattr(hermes_main, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(managed_uv, "resolve_uv", lambda **kw: shutil.which("uv"))
+    monkeypatch.setattr(managed_uv, "ensure_uv", lambda **kw: shutil.which("uv"))
+    monkeypatch.setattr(managed_uv, "update_managed_uv", lambda **kw: None)
     (tmp_path / ".git").mkdir()  # pass the "is a git repo" gate
     monkeypatch.setattr(
         hermes_main, "_resolve_update_branch", lambda args: "main"
@@ -113,19 +118,20 @@ def _patch_update_deps(monkeypatch, tmp_path, run_side_effect):
     monkeypatch.setattr(main_install_repair, "_clear_update_incomplete_marker", lambda: None)
     # Gateway restart path (called after a successful update).
     monkeypatch.setattr(update_cmd, "_finish_dashboard_update_cleanup", lambda *a, **k: None)
-    # Keep the (now surfaced — #78574) gateway auto-restart phase away from
-    # this machine's real gateways: discovery returns nothing, systemd is
-    # unsupported, so the phase is a clean no-op for both snapshots.
-    import hermes_cli.gateway as hermes_gateway
 
+    # This suite tests the post-pull HEAD-movement gate, not fleet restart
+    # behavior.  A successful simulated pull purges cached Hermes modules,
+    # which invalidates monkeypatches attached to hermes_cli.gateway before
+    # the later restart phase re-imports it.  Stub the update-level fleet
+    # phase instead so these tests cannot probe or signal real gateways.
     monkeypatch.setattr(
-        hermes_gateway, "find_gateway_pids", lambda all_profiles=False: []
+        update_cmd, "_restart_gateway_fleet_after_update", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        hermes_gateway, "supports_systemd_services", lambda: False
+        update_cmd, "_resume_windows_gateways_and_merge_outcome", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        hermes_gateway, "find_profile_gateway_processes", lambda *a, **k: []
+        update_cmd, "_verify_fleet_after_update", lambda *a, **k: None
     )
 
 
