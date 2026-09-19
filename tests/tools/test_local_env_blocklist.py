@@ -66,6 +66,16 @@ def _run_with_env(extra_os_env=None, self_env=None):
     return captured.get("env", {})
 
 
+@pytest.fixture(autouse=True)
+def _fresh_kernel_registry():
+    """Dispose persistent execute_code kernels between tests."""
+    from tools.code_kernel import shutdown_all_kernels
+
+    shutdown_all_kernels()
+    yield
+    shutdown_all_kernels()
+
+
 class TestProviderEnvBlocklist:
     """Provider env vars loaded from ~/.hermes/.env must not leak."""
 
@@ -978,6 +988,8 @@ class TestPythonpathSelectiveStrip:
             proc = MagicMock()
             proc.stdout.read.return_value = b""
             proc.stderr.read.return_value = b""
+            proc.stdout.read1.return_value = b""
+            proc.stderr.read1.return_value = b""
             proc.wait.return_value = 0
             proc.returncode = 0
             proc.poll.return_value = 0
