@@ -227,9 +227,16 @@ def _mark_skip_upstream_prompt():
         (get_hermes_home() / SKIP_UPSTREAM_PROMPT_FILE).touch()
 
 
-def _sync_fork_with_upstream(git_cmd: list[str], cwd: Path) -> bool:
-    """Push updated main to origin (sync fork); True on success."""
-    return _git_ok(git_cmd, ["push", "origin", "main", "--force-with-lease"], cwd, network=True)
+def _sync_fork_with_upstream(
+    git_cmd: list[str], cwd: Path, source_ref: str = "main"
+) -> bool:
+    """Fast-forward origin/main from *source_ref*; True on success."""
+    return _git_ok(
+        git_cmd,
+        ["push", "origin", f"{source_ref}:refs/heads/main"],
+        cwd,
+        network=True,
+    )
 
 
 def _offer_upstream_remote(git_cmd: list[str], cwd: Path, *, assume_yes: bool, input_fn) -> bool:
@@ -299,20 +306,30 @@ def _sync_with_upstream_if_needed(git_cmd: list[str], cwd: Path, *, assume_yes: 
     if upstream_ahead == 0:
         print("  ✓ Fork is up to date with upstream")
         return True
-    print(f"\n→ Fork is {upstream_ahead} commit(s) behind upstream\n→ Pulling from upstream...")
-    try:
-        subprocess.run(git_cmd + ["pull", "--ff-only", "upstream", "main"], cwd=cwd, check=True, **_no_prompt_git_kwargs())
-    except subprocess.CalledProcessError:
-        print("  ✗ Failed to pull from upstream. You may need to resolve conflicts manually.")
-        return False
-    print("  ✓ Updated from upstream\n→ Syncing fork...")
-    if _sync_fork_with_upstream(git_cmd, cwd):
-        print("  ✓ Fork synced with upstream")
-    else:
+    print(
+        f"\n→ Fork is {upstream_ahead} commit(s) behind upstream"
+        "\n→ Syncing fork from upstream..."
+    )
+    if not _sync_fork_with_upstream(git_cmd, cwd, "upstream/main"):
         print(
-            "  ℹ Got updates from upstream but couldn't push to fork (no write access?)\n"
-            "    Your local repo is updated, but your fork on GitHub may be behind."
+            "  ✗ Couldn't fast-forward fork from upstream (no write access or "
+            "origin moved?)."
         )
+        return False
+
+    try:
+        subprocess.run(
+            git_cmd + ["fetch", "origin", "main", "--quiet"],
+            cwd=cwd,
+            capture_output=True,
+            check=True,
+            **_no_prompt_git_kwargs(),
+        )
+    except subprocess.CalledProcessError:
+        print("  ✗ Fork was updated, but origin/main could not be refreshed locally.")
+        return False
+
+    print("  ✓ Fork synced with upstream")
     return True
 
 

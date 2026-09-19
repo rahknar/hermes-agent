@@ -916,6 +916,15 @@ def _prepare_checkout_for_update(
         and not assume_yes
         and (gateway_mode or (sys.stdin.isatty() and sys.stdout.isatty())))
 
+    upstream_checked = True
+    if is_fork and branch == "main":
+        upstream_checked = _m()._sync_with_upstream_if_needed(
+            git_cmd,
+            _m().PROJECT_ROOT,
+            assume_yes=assume_yes,
+            input_fn=gw_input_fn,
+        )
+
     # On shallow checkouts `rev-list --count` can report the entire remote ancestry. The
     # zero/nonzero gate is still sound; treat the shallow NUMBER as unknown and recover it
     # via the GitHub compare API when possible.
@@ -929,26 +938,10 @@ def _prepare_checkout_for_update(
         # counted == 0 means local-ahead: falls through to the up-to-date path.
         commit_count = counted if counted is not None else -1
 
-    # A fork can match origin yet trail upstream, so the sync can move HEAD with
-    # commit_count == 0; detect that BEFORE the no-update return so deps, restarts AND the
-    # fleet matrix still run (it used to live in the early-return branch and verified nothing).
-    # The sync can therefore advance HEAD even though the origin comparison found no commits. Detect that
-    # BEFORE taking the no-update return so dependency refreshes, gateway restarts, AND the fleet version
-    # matrix still run for the pulled code (#73108 — previously the sync lived inside the commit_count == 0
-    # branch, which returns immediately after: an update that pulled hundreds of upstream commits printed
-    # "Already up to date!" and verified nothing). Non-fork checkouts have no upstream question: origin IS
-    # the official repo, so "Already up to date!" is fully verified there.
-    upstream_checked = True
-    if commit_count == 0 and is_fork and branch == "main":
-        pre_sync_sha = _capture_head_sha(git_cmd, _m().PROJECT_ROOT)
-        upstream_checked = _m()._sync_with_upstream_if_needed(
-            git_cmd, _m().PROJECT_ROOT, assume_yes=assume_yes, input_fn=gw_input_fn)
-        post_sync_sha = _capture_head_sha(git_cmd, _m().PROJECT_ROOT)
-        if pre_sync_sha and post_sync_sha and pre_sync_sha != post_sync_sha:
-            synced_count = _count_commits_between(
-                git_cmd, _m().PROJECT_ROOT, pre_sync_sha, post_sync_sha)
-            # HEAD moving is proof of an update even if the count can't be read.
-            commit_count = max(1, synced_count)
+    # Forks targeting main are synchronized against official upstream before this
+    # count, so origin/main is the authoritative prepared target for both normal
+    # updates and maintained-branch update_in_place. Non-fork checkouts need no
+    # upstream verification because origin is the official repository.
 
     return _CheckoutPlan(
         auto_stash_ref=auto_stash_ref, commit_count=commit_count, in_place_update=in_place_update,
@@ -1235,10 +1228,6 @@ def _apply_pulled_update(
     _write_fleet_restart_pending_marker(expected_sha=post_pull_sha or "")
     # Stale .pyc would ImportError on gateway restart when new source references new names.
     _sweep_bytecode_after_update(branch)
-
-    if is_fork and branch == "main":
-        _m()._sync_with_upstream_if_needed(
-            git_cmd, _m().PROJECT_ROOT, assume_yes=opts.assume_yes, input_fn=opts.gw_input_fn)
 
     # .[all], falling back to base + extras individually so one broken extra doesn't strip
     # the rest; the ownership preflight refuses first on foreign-owned (sudo-pip) venv files.

@@ -447,23 +447,20 @@ class TestCmdUpdateBranchFallback:
         finalize_receipt.assert_called_once_with("partial")
     @patch("shutil.which", return_value=None)
     @patch("subprocess.run")
-    def test_fork_upstream_sync_that_moves_head_runs_post_update_steps(
+    def test_fork_upstream_sync_that_advances_origin_runs_post_update_steps(
         self, mock_run, _mock_which, mock_args, capsys
     ):
-        """A fork sync that pulls code must continue through post-update work."""
+        """A fork sync that advances origin/main must continue through post-update work."""
         from hermes_cli import main as hm
         from hermes_cli import update_cmd
 
         mock_run.side_effect = _make_run_side_effect(
-            branch="main", verify_ok=True, commit_count="0"
+            branch="main", verify_ok=True, commit_count="1"
         )
 
-        # The first two reads bracket the upstream sync (aaaaaaa -> bbbbbbb:
-        # the sync moved HEAD). The NEXT two bracket the pull inside the
-        # normal update path (bbbbbbb -> ccccccc) — the head-moved no-op
-        # guard added after this PR exits 1 when that pair is equal, so the
-        # mock must show the pull advancing HEAD too.
-        shas = iter(["aaaaaaa", "bbbbbbb", "bbbbbbb", "ccccccc"])
+        # Upstream synchronization prepares origin/main without moving HEAD.
+        # The normal update path then advances HEAD from aaaaaaa to bbbbbbb.
+        shas = iter(["aaaaaaa", "bbbbbbb"])
 
         with patch.object(
             hm,
@@ -472,7 +469,7 @@ class TestCmdUpdateBranchFallback:
         ), patch.object(
             update_cmd,
             "_capture_head_sha",
-            side_effect=lambda *_args, **_kwargs: next(shas, "ccccccc"),
+            side_effect=lambda *_args, **_kwargs: next(shas, "bbbbbbb"),
         ), patch(
             # The full post-update path runs the fleet version check, which
             # reads the REAL machine's profile gateway_state.json files —
@@ -496,8 +493,10 @@ class TestCmdUpdateBranchFallback:
             "hermes_cli.gateway._get_service_pids",
             return_value=set(),
         ), patch.object(
-            hm, "_sync_with_upstream_if_needed"
-        ), patch.object(
+            hm,
+            "_sync_with_upstream_if_needed",
+             return_value=True,
+        ) as upstream_sync, patch.object(
             hm,
             "_reload_updated_runtime_modules",
             # Reaching the reload step IS the proof the post-update path ran
@@ -511,6 +510,7 @@ class TestCmdUpdateBranchFallback:
                 cmd_update(mock_args)
 
         assert exit_info.value.code == 0
+        upstream_sync.assert_called_once()
         post_update_step.assert_called_once_with()
         captured = capsys.readouterr()
         assert "Already up to date!" not in captured.out

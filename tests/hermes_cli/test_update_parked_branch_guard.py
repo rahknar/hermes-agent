@@ -615,3 +615,108 @@ def test_update_on_main_fast_path_unchanged(repo_pair, monkeypatch, capsys):
     head = _git(repo_pair, "rev-parse", "HEAD").stdout.strip()
     remote = _git(repo_pair, "rev-parse", "origin/main").stdout.strip()
     assert head == remote
+
+
+def test_update_in_place_fork_consults_upstream_before_finishing(
+    tmp_path, monkeypatch, capsys
+):
+    """Maintained parked branch on a fork must not stop at stale origin/main.
+
+    Reproduction topology:
+      official upstream/main: BASE -> FORK-NEW -> OFFICIAL-NEW
+      fork origin/main:       BASE -> FORK-NEW
+      hermes-production:      BASE -> LOCAL-MAINTAINED
+
+    The updater must preserve LOCAL-MAINTAINED while incorporating the
+    official upstream update, not merely the stale fork target.
+    """
+    import hermes_cli.config as hermes_config
+
+    # Build the official repository.
+    official = tmp_path / "official"
+    official.mkdir()
+    _git(official, "init", "-q", "-b", "main")
+    _git(official, "config", "user.email", "test@example.com")
+    _git(official, "config", "user.name", "Test")
+
+    (official / "base.txt").write_text("BASE\n")
+    _git(official, "add", "base.txt")
+    _git(official, "commit", "-qm", "BASE")
+
+    # Fork while official == BASE.
+    fork = tmp_path / "fork.git"
+    _git(tmp_path, "clone", "-q", "--bare", str(official), str(fork))
+
+    # Working checkout comes from the fork.
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(fork), str(clone))
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "remote", "add", "upstream", str(official))
+
+    # Advance both official and fork to FORK-NEW.
+    (official / "fork-new.txt").write_text("FORK-NEW\n")
+    _git(official, "add", "fork-new.txt")
+    _git(official, "commit", "-qm", "FORK-NEW")
+    fork_new_sha = _git(official, "rev-parse", "HEAD").stdout.strip()
+    _git(official, "push", "-q", str(fork), "main")
+
+    # Refresh origin/main in the working checkout.
+    _git(clone, "fetch", "-q", "origin", "main")
+    assert _git(clone, "rev-parse", "origin/main").stdout.strip() == fork_new_sha
+
+    # Maintained branch deliberately starts from BASE and has a local commit.
+    base_sha = _git(clone, "rev-list", "--max-parents=0", "HEAD").stdout.strip()
+    _git(clone, "checkout", "-qb", "hermes-production", base_sha)
+    (clone / "local.txt").write_text("LOCAL-MAINTAINED\n")
+    _git(clone, "add", "local.txt")
+    _git(clone, "commit", "-qm", "LOCAL-MAINTAINED")
+    local_sha = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    # Official advances again, but fork/origin remains stale at FORK-NEW.
+    (official / "official-new.txt").write_text("OFFICIAL-NEW\n")
+    _git(official, "add", "official-new.txt")
+    _git(official, "commit", "-qm", "OFFICIAL-NEW")
+    official_new_sha = _git(official, "rev-parse", "HEAD").stdout.strip()
+
+    monkeypatch.setattr(
+        hermes_config,
+        "load_config",
+        lambda: {"updates": {"parked_branch_strategy": "update_in_place"}},
+    )
+
+    # Same update harness, except this case must really be treated as a fork.
+    _patch_update_flow(monkeypatch, clone)
+    monkeypatch.setattr(update_cmd, "_is_fork", lambda *a, **k: True)
+
+    class _StopFlow(Exception):
+        pass
+
+    monkeypatch.setattr(
+        hermes_main,
+        "_abort_dependency_sync_if_self_locked",
+        lambda *a, **k: (_ for _ in ()).throw(_StopFlow()),
+    )
+
+    args = SimpleNamespace(branch=None, yes=False, force=False, force_venv=False)
+
+    with pytest.raises(_StopFlow):
+        hermes_main.cmd_update(args)
+
+    # Maintained checkout must survive.
+    assert (
+        _git(clone, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        == "hermes-production"
+    )
+    assert (clone / "local.txt").read_text() == "LOCAL-MAINTAINED\n"
+    assert _git(clone, "cat-file", "-t", local_sha).stdout.strip() == "commit"
+
+    # Fork target was incorporated.
+    assert (clone / "fork-new.txt").read_text() == "FORK-NEW\n"
+
+    # Critical assertion: official upstream must also have been incorporated.
+    assert (clone / "official-new.txt").read_text() == "OFFICIAL-NEW\n"
+    assert (
+        _git(clone, "merge-base", "--is-ancestor", official_new_sha, "HEAD").returncode
+        == 0
+    )
