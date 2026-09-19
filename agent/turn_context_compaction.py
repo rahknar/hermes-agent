@@ -14,7 +14,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from agent.context_engine import automatic_compaction_status_message
+from agent.context_engine import (
+    automatic_compaction_status_message,
+    can_compress_context,
+)
 from agent.conversation_compression import (
     IDLE_COMPACTION_STATUS_TEMPLATE, PREFLIGHT_COMPRESSION_STATUS_TEMPLATE,
     compression_skipped_due_to_lock, conversation_history_after_compression,
@@ -302,7 +305,14 @@ def _preflight_compression(
             getattr(agent, "codex_app_server_auto_compaction", "native"),
         )
     else:
-        _should_compress_now = _compressor.should_compress(_preflight_tokens)
+        _should_compress_now = (
+            _compressor.should_compress(_preflight_tokens)
+            and can_compress_context(
+                _compressor,
+                out.messages,
+                prompt_tokens=_preflight_tokens,
+            )
+        )
         if not _should_compress_now:
             _compress_block_reason = _blocked_compress_reason(_compressor, _preflight_tokens)
     if _should_compress_now:
@@ -316,7 +326,14 @@ def _preflight_compression(
             _grown = None
         if _grown:
             _apply_grown_window(agent, _compressor, _grown)
-            _should_compress_now = _compressor.should_compress(_preflight_tokens)
+            _should_compress_now = (
+                _compressor.should_compress(_preflight_tokens)
+                and can_compress_context(
+                    _compressor,
+                    out.messages,
+                    prompt_tokens=_preflight_tokens,
+                )
+            )
     if _should_compress_now:
         _run_preflight_passes(
             agent, out, _compressor, _preflight_tokens, system_message, effective_task_id
@@ -328,10 +345,15 @@ def _preflight_compression(
             _compress_block_reason, _preflight_tokens, _compressor.threshold_tokens
         )
     else:
-        # Sub-threshold and unblocked — re-arm the overflow warning.
-        _clear_overflow_warn(agent)
-        # Engine maintenance only when NO skip-branch fired: cooldown, deferred
-        # estimate, or codex-native route keep the engine hook unconsulted.
+        # Re-arm the overflow warning only when genuinely back below threshold.
+        # A pressure-triggered pass may also be skipped because the engine reports
+        # that the current transcript has nothing structurally compactable.
+        if _preflight_tokens < _compressor.threshold_tokens:
+            _clear_overflow_warn(agent)
+
+        # Engine maintenance remains independent of pressure-driven compactability:
+        # engines overriding should_compress_preflight() may still request their
+        # single maintenance pass.
         if not (_compression_cooldown or _preflight_deferred or _codex_native_auto):
             _engine_preflight_maintenance(
                 agent, out, _compressor, _preflight_tokens, system_message, effective_task_id
@@ -410,7 +432,14 @@ def _run_preflight_passes(
             agent, out.messages, out.conversation_history
         )
         _reset_retry_state_after_compaction(agent)
-        if not _compressor.should_compress(_preflight_tokens):
+        if not (
+            _compressor.should_compress(_preflight_tokens)
+            and can_compress_context(
+                _compressor,
+                out.messages,
+                prompt_tokens=_preflight_tokens,
+            )
+        ):
             break
         if not _tc._compression_warrants_another_preflight_pass(
             _orig_tokens, _preflight_tokens, _compressor.threshold_tokens

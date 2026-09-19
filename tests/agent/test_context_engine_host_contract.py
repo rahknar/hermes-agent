@@ -190,4 +190,65 @@ def test_engine_collector_forwards_register_command_to_plugin_manager():
         # Clean up so we don't leak the registration across tests.
         manager._plugin_commands.pop("my-lcm-test-cmd", None)
 
+def test_can_compress_context_preserves_optional_engine_compatibility():
+    """Structural compactability is an optional, fail-open engine capability."""
+    from agent.context_engine import can_compress_context
+
+    messages = [{"role": "user", "content": "hello"}]
+
+    class MissingHook:
+        pass
+
+    class LegacyHook:
+        def __init__(self, result):
+            self.result = result
+            self.messages = None
+
+        def can_compress(self, supplied_messages):
+            self.messages = supplied_messages
+            return self.result
+
+    class TokenAwareHook:
+        def __init__(self):
+            self.messages = None
+            self.prompt_tokens = None
+
+        def can_compress(self, supplied_messages, prompt_tokens=None):
+            self.messages = supplied_messages
+            self.prompt_tokens = prompt_tokens
+            return True
+
+    class BrokenHook:
+        def can_compress(self, supplied_messages, prompt_tokens=None):
+            raise RuntimeError("optional compactability hook failed")
+
+    assert can_compress_context(MissingHook(), messages, prompt_tokens=12_345) is True
+
+    legacy_false = LegacyHook(False)
+    assert (
+        can_compress_context(legacy_false, messages, prompt_tokens=12_345)
+        is False
+    )
+    assert legacy_false.messages is messages
+
+    legacy_true = LegacyHook(True)
+    assert (
+        can_compress_context(legacy_true, messages, prompt_tokens=12_345)
+        is True
+    )
+    assert legacy_true.messages is messages
+
+    token_aware = TokenAwareHook()
+    assert (
+        can_compress_context(token_aware, messages, prompt_tokens=12_345)
+        is True
+    )
+    assert token_aware.messages is messages
+    assert token_aware.prompt_tokens == 12_345
+
+    assert (
+        can_compress_context(BrokenHook(), messages, prompt_tokens=12_345)
+        is True
+    )
+
 

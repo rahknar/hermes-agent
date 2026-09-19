@@ -189,3 +189,21 @@ def test_builtin_compressor_default_sub_threshold_path_unchanged(tmp_path):
     agent._compress_context.assert_not_called()
     agent._emit_status.assert_not_called()
     assert ctx.preflight_compression_blocked is False
+
+def test_engine_preflight_maintenance_ignores_structural_compactability_veto():
+    """Sub-threshold engine maintenance is independent of can_compress()."""
+    hook = MagicMock(return_value=True)
+
+    compressor = _stub_compressor(preflight=hook)
+    compressor.can_compress = MagicMock(return_value=False)
+
+    agent = _make_agent(compressor)
+
+    ctx = _build(agent)
+
+    hook.assert_called_once()
+    compressor.can_compress.assert_not_called()
+    agent._compress_context.assert_called_once()
+
+    assert isinstance(ctx, TurnContext)
+    assert ctx.preflight_compression_blocked is False

@@ -20,6 +20,31 @@ _MEMORY_CONTEXT_HEAD_CHARS = 4_000
 _MEMORY_CONTEXT_TAIL_CHARS = 1_500
 _MEMORY_CONTEXT_TRUNCATION_MARKER = "\n...[memory provider context truncated]...\n"
 
+def can_compress_context(
+    engine: Any,
+    messages: List[Dict[str, Any]],
+    prompt_tokens: Optional[int] = None,
+) -> bool:
+    """Return whether an engine can make structural compaction progress.
+
+    ``prompt_tokens`` lets engines account for request pressure that is not
+    represented by message-token counts alone. Missing or failing optional
+    hooks remain permissive, and legacy one-argument hooks are supported.
+    """
+    checker = getattr(engine, "can_compress", None)
+    if not callable(checker):
+        return True
+
+    try:
+        try:
+            return bool(checker(messages, prompt_tokens=prompt_tokens))
+        except TypeError:
+            # Compatibility with engines/test doubles implementing the older
+            # ``can_compress(messages)`` hook.
+            return bool(checker(messages))
+    except Exception:
+        return True
+
 
 def sanitize_memory_context(memory_context: str) -> str:
     """Prepare provider context for a context-engine/LLM egress boundary."""
@@ -79,6 +104,26 @@ class ContextEngine(ABC):
         canonical buckets (``input_tokens``, ``output_tokens``, ``cache_read_tokens``,
         ``cache_write_tokens``, ``reasoning_tokens``) are optional on older hosts.
         """
+
+    def can_compress(
+        self,
+        messages: List[Dict[str, Any]],
+        prompt_tokens: Optional[int] = None,
+    ) -> bool:
+        """Return whether this engine can make structural compaction progress.
+
+        Pressure and compactability are separate decisions: ``should_compress()``
+        answers whether compression is warranted by context pressure, while this
+        hook lets an engine decline a pressure-triggered pass when the current
+        transcript contains nothing it can compact.
+
+        ``prompt_tokens`` may include request overhead not represented by the
+        messages themselves. Engines may use it when deciding whether an emergency
+        or other pressure-driven compaction path can make progress.
+
+        The permissive default preserves existing engine behavior.
+        """
+        return True
 
     @abstractmethod
     def should_compress(self, prompt_tokens: int = None) -> bool:
