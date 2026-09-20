@@ -214,6 +214,35 @@ class TestStripBlockedTools(unittest.TestCase):
         self.assertIn("file", result)
         self.assertIn("web", result)
 
+    def test_child_agent_owns_and_composes_semantic_role(self):
+        parent = _make_mock_parent()
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            _build_child_agent(
+                task_index=0,
+                goal="Fix the implementation",
+                context=None,
+                toolsets=None,
+                model=None,
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+                semantic_role="coder",
+            )
+
+        _, kwargs = MockAgent.call_args
+
+        self.assertEqual(kwargs["semantic_role"], "coder")
+        self.assertIn(
+            "You are the Coder specialist.",
+            kwargs["ephemeral_system_prompt"],
+        )
+        self.assertLess(
+            kwargs["ephemeral_system_prompt"].index("You are the Coder specialist."),
+            kwargs["ephemeral_system_prompt"].index("YOUR TASK"),
+        )
+
     def test_mixed_composite_is_subtracted_at_child_assembly(self):
         """A mixed platform bundle must not re-expose blocked leaf tools.
 
