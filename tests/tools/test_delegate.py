@@ -147,6 +147,54 @@ class TestChildSystemPrompt(unittest.TestCase):
         self.assertIn("YOUR TASK", prompt)
         self.assertNotIn("CONTEXT", prompt)
 
+    def test_semantic_role_contract_precedes_task(self):
+        prompt = _build_child_system_prompt(
+            "Fix the tests",
+            semantic_role="coder",
+        )
+
+        self.assertIn("You are the Coder specialist.", prompt)
+        self.assertLess(
+            prompt.index("You are the Coder specialist."),
+            prompt.index("YOUR TASK"),
+        )
+
+    def test_semantic_role_is_normalized(self):
+        prompt = _build_child_system_prompt(
+            "Investigate the evidence",
+            semantic_role="  AnAlYsT  ",
+        )
+
+        self.assertIn("You are the Analyst specialist.", prompt)
+
+    def test_unknown_semantic_role_preserves_generic_child(self):
+        prompt = _build_child_system_prompt(
+            "Do the thing",
+            semantic_role="not-a-role",
+        )
+
+        self.assertNotIn("You are the Analyst specialist.", prompt)
+        self.assertNotIn("You are the Coder specialist.", prompt)
+        self.assertNotIn("You are the Expert specialist.", prompt)
+        self.assertNotIn("You are the Webworker specialist.", prompt)
+        self.assertIn("YOUR TASK:\nDo the thing", prompt)
+
+    def test_semantic_role_is_independent_of_delegation_capability(self):
+        prompt = _build_child_system_prompt(
+            "Analyze the failure",
+            role="orchestrator",
+            max_spawn_depth=3,
+            child_depth=1,
+            semantic_role="analyst",
+        )
+
+        self.assertIn("You are the Analyst specialist.", prompt)
+        self.assertIn("You are at depth 1", prompt)
+        self.assertLess(
+            prompt.index("You are the Analyst specialist."),
+            prompt.index("YOUR TASK"),
+        )
+
 class TestStripBlockedTools(unittest.TestCase):
     def test_removes_blocked_toolsets(self):
         result = _strip_blocked_tools(["terminal", "file", "delegation", "clarify", "memory", "code_execution"])
