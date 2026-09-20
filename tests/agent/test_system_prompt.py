@@ -10,6 +10,8 @@ import pytest
 
 from agent.system_prompt import build_system_prompt, build_system_prompt_parts
 
+from agent.system_prompt import _semantic_role_parts
+
 
 def _make_agent(**overrides):
     base = dict(
@@ -25,6 +27,7 @@ def _make_agent(**overrides):
         model="",
         provider="",
         platform="",
+        semantic_role=None,
         pass_session_id=False,
         session_id="",
         # build_system_prompt drains pending truncation warnings and
@@ -151,6 +154,68 @@ def _prompt_parts(agent):
         patch("agent.prompt_builder.build_context_files_prompt", return_value=""),
     ):
         return build_system_prompt_parts(agent)
+
+def test_semantic_role_parts_are_empty_without_explicit_role():
+    agent = SimpleNamespace(platform=None, semantic_role=None)
+
+    assert _semantic_role_parts(agent) == []
+    
+
+
+def test_semantic_role_parts_resolve_explicit_role_verbatim():
+    agent = SimpleNamespace(platform=None, semantic_role="  OrChEsTrAtOr  ")
+
+    parts = _semantic_role_parts(agent)
+
+    assert len(parts) == 1
+    assert parts[0].startswith("You are the Orchestrator.")
+
+
+def test_semantic_role_parts_ignore_unknown_role():
+    agent = SimpleNamespace(platform=None, semantic_role="not-a-role")
+
+    assert _semantic_role_parts(agent) == []
+
+
+def test_semantic_role_parts_skip_subagents():
+    agent = SimpleNamespace(platform="subagent", semantic_role="analyst")
+
+    assert _semantic_role_parts(agent) == []
+
+def test_semantic_role_contract_is_composed_into_stable_prompt():
+    agent = _make_agent(semantic_role="orchestrator")
+
+    stable = _stable_prompt(agent)
+
+    assert "You are the Orchestrator." in stable
+
+
+def test_semantic_role_contract_follows_identity_and_precedes_guidance():
+    agent = _make_agent(semantic_role="orchestrator")
+
+    with (
+        patch("agent.prompt_builder.load_soul_md", return_value="TEST IDENTITY"),
+        patch("agent.prompt_builder.build_environment_hints", return_value=""),
+        patch("agent.prompt_builder.build_context_files_prompt", return_value=""),
+        patch("agent.system_prompt._guidance_parts", return_value=["TEST GUIDANCE"]),
+    ):
+        stable = build_system_prompt_parts(agent)["stable"]
+
+    assert stable.index("TEST IDENTITY") < stable.index("You are the Orchestrator.")
+    assert stable.index("You are the Orchestrator.") < stable.index("TEST GUIDANCE")
+
+
+def test_no_semantic_role_contract_is_added_without_explicit_role():
+    stable = _stable_prompt(_make_agent())
+
+    for opening in (
+        "You are the Orchestrator.",
+        "You are the Analyst specialist.",
+        "You are the Coder specialist.",
+        "You are the Expert specialist.",
+        "You are the Webworker specialist.",
+    ):
+        assert opening not in stable
 
 
 def _init_code_repo(path):

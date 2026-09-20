@@ -29,6 +29,8 @@ from agent.runtime_cwd import resolve_context_cwd
 from hermes_constants import get_default_hermes_root, get_hermes_home
 from utils import is_truthy_value
 
+from agent.role_contracts import get_role_contract
+
 logger = logging.getLogger(__name__)
 _PLUGIN_SECTION_FRAME_RE = re.compile(
     r"^## Plugin Context: (?P<id>[a-z0-9][a-z0-9._-]{0,127})\n<!-- hermes-plugin-section-chars:(?P<chars>[0-9]{1,4}) -->\n\n",
@@ -582,6 +584,14 @@ def _post_workspace_parts(agent: Any) -> List[str]:
     parts += [_active_profile_line(agent), platform_hint(agent)]
     return parts
 
+def _semantic_role_parts(agent: Any) -> List[str]:
+    """Return the explicit semantic-role contract for root prompt composition."""
+    if getattr(agent, "platform", None) == "subagent":
+        return []
+
+    contract = get_role_contract(getattr(agent, "semantic_role", None))
+    return [contract] if contract else []
+
 
 def _context_files_part(agent: Any, ctx_len: Optional[int], soul_loaded: bool) -> List[str]:
     """Project context files (AGENTS.md etc.) for the context tier. TERMINAL_CWD
@@ -615,6 +625,7 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     _ctx_len = _cc_len if isinstance(_cc_len, int) and _cc_len > 0 else None
     # ── Stable tier ────────────────────────────────────────────────
     stable_parts, _soul_loaded = _identity_parts(agent, _ctx_len)
+    stable_parts.extend(_semantic_role_parts(agent))
     # The skill_view() pointer dangles without skill tools OR without the
     # hermes-agent skill installed, so the variant is chosen after the skills
     # index is built; this slot holds its position.
