@@ -233,6 +233,7 @@ def test_init_agent_forwards_single_query_flag(monkeypatch):
     cli._single_query_mode = True
 
     seen = {}
+    agent_kwargs = {}
 
     def _fake_ensure(*, logger, timeout=None, single_query=False, **_kw):
         seen["single_query"] = single_query
@@ -243,10 +244,16 @@ def test_init_agent_forwards_single_query_flag(monkeypatch):
         _fake_ensure,
     )
     import run_agent
-    monkeypatch.setattr(run_agent, "AIAgent", lambda *_a, **_k: types.SimpleNamespace())
+
+    def _fake_agent(*_args, **kwargs):
+        agent_kwargs.update(kwargs)
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(run_agent, "AIAgent", _fake_agent)
 
     assert cli._init_agent() is True
     assert seen.get("single_query") is True
+    assert agent_kwargs["semantic_role"] == "orchestrator"
 
 
 def test_init_agent_defaults_to_interactive(monkeypatch):

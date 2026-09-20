@@ -2165,6 +2165,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             "ephemeral_system_prompt": ephemeral_system_prompt or None,
             "enabled_toolsets": enabled_toolsets, "session_id": session_id,
             "platform": "api_server",
+            "semantic_role": "orchestrator",
             "stream_delta_callback": stream_delta_callback,
             "tool_progress_callback": tool_progress_callback,
             "tool_start_callback": tool_start_callback,

@@ -2672,6 +2672,7 @@ class TestModelRoutesAgentCreation:
         assert captured["model"] == "other/model"
         assert captured["provider"] == "otherprov"
         assert captured["api_key"] == "sk-otherprov"
+        assert captured["semantic_role"] == "orchestrator"
 
 
     def test_session_model_override_beats_route(self, monkeypatch):

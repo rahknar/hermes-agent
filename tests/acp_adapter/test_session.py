@@ -109,6 +109,7 @@ class TestCreateSession:
         state = SessionManager(db=None).create_session(cwd="/tmp/project")
 
         assert state.agent.session_cwd == "/tmp/project"
+        assert state.agent.kwargs["semantic_role"] == "orchestrator"
 
 
 

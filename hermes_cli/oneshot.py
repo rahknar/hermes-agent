@@ -482,6 +482,7 @@ def _run_agent(
             enabled_toolsets=toolsets_list,
             quiet_mode=True,
             platform="cli",
+            semantic_role="orchestrator",
             session_db=session_db,
             session_id=resume_sid,
             credential_pool=runtime.get("credential_pool"),

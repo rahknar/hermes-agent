@@ -389,7 +389,7 @@ class SessionManager:
             if not isinstance(cfg, dict) or cfg.get("enabled", True) is not False
         ]
         kwargs = {
-            "platform": "acp", "quiet_mode": True, "session_id": session_id, "session_db": self._get_db(),
+            "platform": "acp", "semantic_role": "orchestrator", "quiet_mode": True, "session_id": session_id, "session_db": self._get_db(),
             "enabled_toolsets": _expand_acp_enabled_toolsets(["hermes-acp"], mcp_server_names=configured_mcp_servers),
             "model": model or default_model,
         }

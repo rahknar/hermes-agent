@@ -4547,6 +4547,7 @@ def test_make_agent_passes_configured_fallback_chain(monkeypatch):
     assert agent.model == "gpt-5.5"
     assert captured["fallback_model"] == fallback_chain
     assert captured["platform"] == "tui"
+    assert captured["semantic_role"] == "orchestrator"
 
 
 def _capture_make_agent_kwargs(monkeypatch) -> dict:

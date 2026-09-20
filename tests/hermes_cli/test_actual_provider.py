@@ -539,6 +539,7 @@ def test_actual_oneshot_reasoning_override_reaches_agent(monkeypatch):
 
     assert response == "ok"
     assert captured["reasoning_config"] == {"enabled": True, "effort": "ultra"}
+    assert captured["semantic_role"] == "orchestrator"
 
 
 def test_oneshot_dispatch_forwards_reasoning_override(monkeypatch):

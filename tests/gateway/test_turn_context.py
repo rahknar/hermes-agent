@@ -59,6 +59,47 @@ class TestTurnRunner:
         assert asyncio.iscoroutinefunction(TurnRunner.send_progress_messages)
         assert runner._ctx is ctx
 
+    def test_build_fresh_agent_selects_orchestrator_semantic_role(self):
+        captured = {}
+
+        def fake_agent(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        source = SessionSource(
+            platform=Platform.LOCAL,
+            chat_id="test-chat",
+            user_id="test-user",
+        )
+        ctx = TurnContext(
+            source=source,
+            session_id="test-session",
+            session_key="test-session-key",
+            user_config={},
+            AIAgent=fake_agent,
+        )
+
+        gateway_runner = MagicMock()
+        gateway_runner._session_db = None
+        gateway_runner._prefill_messages = None
+        gateway_runner._service_tier = None
+        gateway_runner._refresh_fallback_model.return_value = None
+
+        from gateway.run_turn_runner import TurnRunner
+
+        turn_runner = TurnRunner(gateway_runner, ctx)
+        turn_runner._build_fresh_agent(
+            turn_route={"model": "test-model", "runtime": {}},
+            platform_key="local",
+            combined_ephemeral=None,
+            max_iterations=90,
+            reasoning_config=None,
+            pr={},
+            skip_context_files=False,
+        )
+
+        assert captured["semantic_role"] == "orchestrator"
+
     def test_send_progress_messages_no_queue_returns(self):
         ctx = TurnContext(progress_queue=None)
         runner = _make_runner(ctx)
