@@ -340,6 +340,97 @@ class TestStripBlockedTools(unittest.TestCase):
         self.assertTrue(names & {"terminal", "read_file", "web_search"})
         self.assertTrue(DELEGATE_BLOCKED_TOOLS.isdisjoint(names))
 
+    def test_build_children_integrates_semantic_role_into_child_agent_and_prompt(self):
+        parent = _make_mock_parent()
+        task_list = [
+            {
+                "goal": "Fix the implementation",
+                "semantic_role": "coder",
+            }
+        ]
+        creds = {
+            "provider": None,
+            "base_url": None,
+            "api_key": None,
+            "api_mode": None,
+            "model": None,
+        }
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+
+            children, err = _build_children(
+                task_list,
+                [None],
+                creds,
+                top_role="leaf",
+                max_iterations=10,
+                parent_agent=parent,
+                routing_cfg={},
+                live_deleg_id=None,
+                live_writers=[],
+            )
+
+        self.assertIsNone(err)
+        self.assertEqual(len(children), 1)
+
+        _, kwargs = MockAgent.call_args
+        self.assertEqual(kwargs["semantic_role"], "coder")
+        self.assertIn(
+            "You are the Coder specialist.",
+            kwargs["ephemeral_system_prompt"],
+        )
+        self.assertLess(
+            kwargs["ephemeral_system_prompt"].index("You are the Coder specialist."),
+            kwargs["ephemeral_system_prompt"].index("YOUR TASK"),
+        )
+
+    def test_build_children_without_semantic_role_preserves_generic_child(self):
+        parent = _make_mock_parent()
+        task_list = [{"goal": "Handle the delegated task"}]
+        creds = {
+            "provider": None,
+            "base_url": None,
+            "api_key": None,
+            "api_mode": None,
+            "model": None,
+        }
+
+        with patch("run_agent.AIAgent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+
+            children, err = _build_children(
+                task_list,
+                [None],
+                creds,
+                top_role="leaf",
+                max_iterations=10,
+                parent_agent=parent,
+                routing_cfg={},
+                live_deleg_id=None,
+                live_writers=[],
+            )
+
+        self.assertIsNone(err)
+        self.assertEqual(len(children), 1)
+
+        _, kwargs = MockAgent.call_args
+        self.assertIsNone(kwargs["semantic_role"])
+
+        prompt = kwargs["ephemeral_system_prompt"]
+        self.assertTrue(
+            prompt.startswith(
+                "You are a focused subagent working on a specific delegated task."
+            )
+        )
+        for specialist in (
+            "You are the Analyst specialist.",
+            "You are the Coder specialist.",
+            "You are the Expert specialist.",
+            "You are the Webworker specialist.",
+        ):
+            self.assertNotIn(specialist, prompt)
+
     def test_orchestrator_composite_regains_only_delegate_task(self):
         import model_tools
 
