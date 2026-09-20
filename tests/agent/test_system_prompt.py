@@ -159,7 +159,7 @@ def test_semantic_role_parts_are_empty_without_explicit_role():
     agent = SimpleNamespace(platform=None, semantic_role=None)
 
     assert _semantic_role_parts(agent) == []
-    
+
 
 
 def test_semantic_role_parts_resolve_explicit_role_verbatim():
