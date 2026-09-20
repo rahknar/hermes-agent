@@ -2142,7 +2142,7 @@ _USAGE_STATE: Dict[str, Any] = {
 
 # Constructor params stored verbatim under the same name.
 _PASSTHROUGH_PARAMS = (
-    "model", "max_iterations", "save_trajectories", "verbose_logging", "quiet_mode",
+    "model", "semantic_role", "max_iterations", "save_trajectories", "verbose_logging", "quiet_mode",
     "tool_progress_mode", "ephemeral_system_prompt", "platform", "skip_context_files",
     "load_soul_identity", "pass_session_id", "log_prefix_chars",
     # OpenRouter provider preferences
@@ -2173,7 +2173,8 @@ _CALLBACK_PARAMS = (
 def init_agent(
     agent, base_url: str = None, api_key: str = None, provider: str = None, api_mode: str = None,
     acp_command: str = None, acp_args: list[str] | None = None, command: str = None,
-    args: list[str] | None = None, model: str = "", max_iterations: int = sys.maxsize,
+    args: list[str] | None = None, model: str = "", semantic_role: str | None = None,
+    max_iterations: int = sys.maxsize,
     enabled_toolsets: List[str] = None, disabled_toolsets: List[str] = None,
     save_trajectories: bool = False, verbose_logging: bool = False, quiet_mode: bool = False,
     tool_progress_mode: str = "all", ephemeral_system_prompt: str = None,

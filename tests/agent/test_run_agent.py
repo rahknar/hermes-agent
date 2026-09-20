@@ -75,6 +75,27 @@ def agent():
         a.client = MagicMock()
         return a
 
+def test_aiagent_semantic_role_is_stored_verbatim(agent):
+    assert agent.semantic_role is None
+
+    with (
+        patch(
+            "model_tools.get_tool_definitions", return_value=_make_tool_defs("web_search")
+        ),
+        patch("model_tools.check_toolset_requirements", return_value={}),
+        patch("agent.process_bootstrap.OpenAI"),
+    ):
+        role_agent = AIAgent(
+            api_key="test-key-1234567890",
+            base_url="https://openrouter.ai/api/v1",
+            quiet_mode=True,
+            skip_context_files=True,
+            skip_memory=True,
+            semantic_role="  AnAlYsT  ",
+        )
+
+    assert role_agent.semantic_role == "  AnAlYsT  "
+
 
 def test_persist_user_message_override_rewrites_text_turns(agent):
     messages = [{"role": "user", "content": "API-only synthetic prefix\nhello"}]
