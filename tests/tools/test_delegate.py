@@ -25,6 +25,7 @@ from tools.delegate_tool import (
     _load_config,
     delegate_task,
     _build_child_agent,
+    _build_children,
     _build_child_progress_callback,
     _build_child_system_prompt,
     _strip_blocked_tools,
@@ -73,6 +74,12 @@ class TestDelegateRequirements(unittest.TestCase):
         self.assertIn("goal", task_props)
         self.assertIn("context", task_props)
         self.assertIn("output_schema", task_props)
+        self.assertIn("semantic_role", task_props)
+        self.assertEqual(
+            task_props["semantic_role"]["enum"],
+            ["analyst", "coder", "expert", "webworker"],
+        )
+        self.assertNotIn("semantic_role", props)
         # toolsets is intentionally NOT exposed to the model — subagents always
         # inherit the parent's toolsets. Letting the model name toolsets was a
         # capability-selection surface the model should not control.
@@ -241,6 +248,44 @@ class TestStripBlockedTools(unittest.TestCase):
         self.assertLess(
             kwargs["ephemeral_system_prompt"].index("You are the Coder specialist."),
             kwargs["ephemeral_system_prompt"].index("YOUR TASK"),
+        )
+
+    def test_build_children_forwards_task_semantic_role(self):
+        parent = _make_mock_parent()
+        task_list = [
+            {
+                "goal": "Fix the implementation",
+                "semantic_role": "coder",
+            }
+        ]
+        creds = {
+            "provider": None,
+            "base_url": None,
+            "api_key": None,
+            "api_mode": None,
+            "model": None,
+        }
+
+        with patch("tools.delegate_tool._build_child_preserving_parent_tools") as build_child:
+            build_child.return_value = MagicMock()
+
+            children, err = _build_children(
+                task_list,
+                [None],
+                creds,
+                top_role="leaf",
+                max_iterations=10,
+                parent_agent=parent,
+                routing_cfg={},
+                live_deleg_id=None,
+                live_writers=[],
+            )
+
+        self.assertIsNone(err)
+        self.assertEqual(len(children), 1)
+        self.assertEqual(
+            build_child.call_args.kwargs["semantic_role"],
+            "coder",
         )
 
     def test_mixed_composite_is_subtracted_at_child_assembly(self):

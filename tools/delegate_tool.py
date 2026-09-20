@@ -386,7 +386,8 @@ def _build_children(
                 task_index=i, goal=t["goal"], context=_child_context,
                 toolsets=None,  # always inherit the parent's toolsets
                 model=creds["model"], max_iterations=max_iterations, task_count=len(task_list),
-                parent_agent=parent_agent, role=_normalize_role(t.get("role") or top_role), **overrides,
+                parent_agent=parent_agent, role=_normalize_role(t.get("role") or top_role),
+                semantic_role=t.get("semantic_role"), **overrides,
             )
         except ValueError as exc:
             return [], str(exc)
@@ -622,6 +623,15 @@ DELEGATE_TASK_SCHEMA = {
                             "string",
                             "What this subagent should accomplish. Be specific and self-contained — it knows "
                             "nothing about your conversation history.",
+                        ),
+                        "semantic_role": _p(
+                            "string",
+                            "Optional specialist responsibility for this child. Choose by the task's semantic work, "
+                            "not by model/provider/backend or delegation depth: analyst = causal/evidence-heavy analysis "
+                            "or diagnosis; coder = implementation/debugging/code review; expert = difficult technical "
+                            "synthesis or complex problem solving; webworker = source-heavy research/retrieval/reduction. "
+                            "Omit when no specialist role clearly applies.",
+                            enum=["analyst", "coder", "expert", "webworker"],
                         ),
                         "context": _p(
                             "string",
