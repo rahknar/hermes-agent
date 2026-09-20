@@ -36,3 +36,17 @@ def test_contracts_identify_their_semantic_responsibility():
 
     for role, opening in expected_identity.items():
         assert ROLE_CONTRACTS[role].startswith(opening)
+
+
+def test_orchestrator_contract_expresses_specialist_selection_via_semantic_role():
+    contract = ROLE_CONTRACTS["orchestrator"]
+
+    assert "`semantic_role`" in contract
+    for role in ("analyst", "coder", "expert", "webworker"):
+        assert f"`{role}`" in contract
+
+    assert "Omit `semantic_role` when no specialist role clearly applies." in contract
+    assert (
+        "`semantic_role` selects responsibility only. Do not use it to select a model, "
+        "provider, backend, or delegation capability."
+    ) in contract
