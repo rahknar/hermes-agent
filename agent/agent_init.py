@@ -1043,7 +1043,7 @@ def _init_fallback_chain(agent, fallback_model):
             print(f"🔄 Fallback chain ({len(chain)} providers): " + " → ".join(labels))
 
 
-def _load_tools(agent, enabled_toolsets, disabled_toolsets):
+def _load_tools(agent, enabled_toolsets, disabled_toolsets, allowed_tool_names=None):
     # A multiplexed gateway may have switched HERMES_HOME since model_tools was imported;
     # make sure this profile's plugins are discovered before the tool snapshot.
     try:
@@ -1062,6 +1062,7 @@ def _load_tools(agent, enabled_toolsets, disabled_toolsets):
     agent.tools = model_tools.get_tool_definitions(
         enabled_toolsets=enabled_toolsets, disabled_toolsets=disabled_toolsets,
         quiet_mode=agent.quiet_mode,
+        allowed_tool_names=allowed_tool_names,
     )
 
     agent.valid_tool_names = {tool["function"]["name"] for tool in agent.tools} if agent.tools else set()
@@ -2185,6 +2186,7 @@ def init_agent(
     args: list[str] | None = None, model: str = "", semantic_role: str | None = None,
     max_iterations: int = sys.maxsize,
     enabled_toolsets: List[str] = None, disabled_toolsets: List[str] = None,
+    allowed_tool_names: Optional[set[str]] = None,
     save_trajectories: bool = False, verbose_logging: bool = False, quiet_mode: bool = False,
     tool_progress_mode: str = "all", ephemeral_system_prompt: str = None,
     log_prefix_chars: int = 100, log_prefix: str = "", providers_allowed: List[str] = None,
@@ -2288,7 +2290,7 @@ def init_agent(
     _set_defaults(agent, _STREAM_STATE)
     _build_client(agent, api_key, base_url, fallback_model)
     _init_fallback_chain(agent, fallback_model)
-    _load_tools(agent, enabled_toolsets, disabled_toolsets)
+    _load_tools(agent, enabled_toolsets, disabled_toolsets, allowed_tool_names)
     _init_session_state(
         agent, session_id, session_db, parent_session_id, reasoning_config, max_tokens,
         checkpoints_enabled, checkpoint_max_snapshots, checkpoint_max_total_size_mb, checkpoint_max_file_size_mb,

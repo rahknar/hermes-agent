@@ -210,20 +210,30 @@ def _clear_tool_defs_cache() -> None:
 
 
 def get_tool_definitions(enabled_toolsets: Optional[List[str]] = None, disabled_toolsets: Optional[List[str]] = None,
-                         quiet_mode: bool = False, skip_tool_search_assembly: bool = False) -> List[Dict[str, Any]]:
+                         quiet_mode: bool = False, skip_tool_search_assembly: bool = False,
+                         allowed_tool_names: Optional[set[str]] = None) -> List[Dict[str, Any]]:
     """Tool definitions for model API calls, filtered by toolset.
 
     enabled_toolsets None = all; disabled_toolsets are subtracted after enabling.
+    allowed_tool_names is an optional concrete-name authority ceiling applied after
+    toolset resolution; it may remove tools but can never grant tools the selection
+    did not already authorize. None means no ceiling; an empty set allows no tools.
     quiet_mode suppresses status prints and enables memoization.
     skip_tool_search_assembly returns raw schemas for every enabled tool — only
     the tool_search bridge should use it (it reads the real, uncollapsed catalog).
     """
     def compute():
-        return _compute_tool_definitions(enabled_toolsets, disabled_toolsets, quiet_mode,
-                                         skip_tool_search_assembly=skip_tool_search_assembly)
+        return _compute_tool_definitions(
+            enabled_toolsets, disabled_toolsets, quiet_mode,
+            skip_tool_search_assembly=skip_tool_search_assembly,
+            allowed_tool_names=allowed_tool_names,
+        )
     if not quiet_mode:
         return compute()
-    cache_key = _tool_defs_cache_key(enabled_toolsets, disabled_toolsets, skip_tool_search_assembly)
+    cache_key = _tool_defs_cache_key(
+        enabled_toolsets, disabled_toolsets, skip_tool_search_assembly,
+        allowed_tool_names=allowed_tool_names,
+    )
     # Cache the freshly-computed list, but hand callers a shallow copy so downstream mutations (e.g.
     # run_agent appending memory/LCM tool schemas to self.tools) don't poison the cache. Without this, a
     # long-lived Gateway process accumulates duplicate tool names across agent inits and providers that
@@ -253,6 +263,7 @@ def get_tool_definitions(enabled_toolsets: Optional[List[str]] = None, disabled_
 
 def _tool_defs_cache_key(
     enabled_toolsets: Optional[List[str]], disabled_toolsets: Optional[List[str]], skip_tool_search_assembly: bool,
+    allowed_tool_names: Optional[set[str]] = None,
 ) -> Optional[tuple]:
     """Memo key for get_tool_definitions, or None when caching must be bypassed.
 
@@ -273,6 +284,7 @@ def _tool_defs_cache_key(
         registry.current_scope_key(), frozenset(enabled_toolsets) if enabled_toolsets is not None else None,
         frozenset(disabled_toolsets) if disabled_toolsets else None, registry._generation, cfg_fp,
         bool(os.environ.get("HERMES_KANBAN_TASK")), bool(skip_tool_search_assembly),
+        frozenset(allowed_tool_names) if allowed_tool_names is not None else None,
         _is_delegated_child_context(), _is_dispatcher_owned_worker(), profile_scope,
     )
 
@@ -488,9 +500,12 @@ _TOOL_SEARCH_LISTING_FORMS = {
 
 
 def _compute_tool_definitions(enabled_toolsets: Optional[List[str]] = None, disabled_toolsets: Optional[List[str]] = None,
-                              quiet_mode: bool = False, skip_tool_search_assembly: bool = False) -> List[Dict[str, Any]]:
+                              quiet_mode: bool = False, skip_tool_search_assembly: bool = False,
+                              allowed_tool_names: Optional[set[str]] = None) -> List[Dict[str, Any]]:
     """Uncached implementation of :func:`get_tool_definitions`."""
     tools_to_include = _select_tool_names(enabled_toolsets, disabled_toolsets, quiet_mode)
+    if allowed_tool_names is not None:
+        tools_to_include.intersection_update(allowed_tool_names)
     # Selection is per schema, not per process/profile. Kanban's local checks
     # are uncached; the outer definitions cache already keys on this selection.
     from tools.kanban_toolset_context import scoped_kanban_toolset_selection

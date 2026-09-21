@@ -7180,3 +7180,35 @@ class TestMemoryContextSanitization:
         assert "memory-context" not in result.lower()
         assert "stale observation" not in result
         assert "how is the honcho working" in result
+
+
+# =========================================================================
+# Concrete tool-name authority ceiling plumbing
+# =========================================================================
+
+class TestAllowedToolNamesPlumbing:
+    @staticmethod
+    def _build_agent(allowed_tool_names):
+        with (
+            patch("model_tools.check_toolset_requirements", return_value={}),
+            patch("agent.process_bootstrap.OpenAI"),
+        ):
+            return AIAgent(
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+                enabled_toolsets=["hermes-cli"],
+                allowed_tool_names=allowed_tool_names,
+            )
+
+    def test_allowed_tool_names_reaches_agent_tool_loading(self):
+        restricted = self._build_agent({"read_file"})
+
+        assert set(restricted.valid_tool_names) == {"read_file"}
+
+    def test_empty_allowed_tool_names_reaches_agent_tool_loading(self):
+        restricted = self._build_agent(set())
+
+        assert set(restricted.valid_tool_names) == set()

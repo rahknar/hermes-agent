@@ -239,6 +239,7 @@ class AIAgent(
         max_iterations: int = sys.maxsize,  # unlimited tool-calling iterations by default (shared with subagents)
         tool_delay: float = None,  # deprecated: accepted for compatibility, ignored
         enabled_toolsets: List[str] = None, disabled_toolsets: List[str] = None,
+        allowed_tool_names: Optional[set[str]] = None,
         save_trajectories: bool = False, verbose_logging: bool = False, quiet_mode: bool = False,
         tool_progress_mode: str = "all", ephemeral_system_prompt: str = None,
         log_prefix_chars: int = 100, log_prefix: str = "",

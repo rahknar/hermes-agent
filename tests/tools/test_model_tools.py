@@ -568,3 +568,76 @@ class TestBridgeDispatch:
             out = handle_function_call("tool_call", {"name": "mcp_x"}, task_id="t")
         assert json.loads(out) == {"ok": True}
         assert disp.call_args.args[0] == "mcp_x" and disp.call_args.args[1] == {"a": 1}
+
+
+# =========================================================================
+# Concrete tool-name authority ceiling
+# =========================================================================
+
+class TestAllowedToolNames:
+    @staticmethod
+    def _names(**kwargs):
+        from model_tools import get_tool_definitions
+
+        definitions = get_tool_definitions(
+            quiet_mode=True,
+            skip_tool_search_assembly=True,
+            **kwargs,
+        )
+        return {item["function"]["name"] for item in definitions}
+
+    def test_none_preserves_existing_tool_resolution(self):
+        baseline = self._names(
+            enabled_toolsets=["hermes-cli"],
+        )
+        restricted = self._names(
+            enabled_toolsets=["hermes-cli"],
+            allowed_tool_names=None,
+        )
+
+        assert restricted == baseline
+        assert baseline
+
+    def test_allowed_tool_names_intersects_resolved_tools(self):
+        names = self._names(
+            enabled_toolsets=["hermes-cli"],
+            allowed_tool_names={"read_file", "execute_code"},
+        )
+
+        assert names == {"read_file", "execute_code"}
+
+    def test_empty_allowed_tool_names_means_no_tools(self):
+        names = self._names(
+            enabled_toolsets=["hermes-cli"],
+            allowed_tool_names=set(),
+        )
+
+        assert names == set()
+
+    def test_allowed_tool_names_cannot_manufacture_authority(self):
+        baseline = self._names(
+            enabled_toolsets=["file"],
+        )
+        assert "terminal" not in baseline
+
+        names = self._names(
+            enabled_toolsets=["file"],
+            allowed_tool_names={"read_file", "terminal"},
+        )
+
+        assert names <= baseline
+        assert "read_file" in names
+        assert "terminal" not in names
+
+    def test_allowed_tool_names_participates_in_cache_identity(self):
+        read_only = self._names(
+            enabled_toolsets=["hermes-cli"],
+            allowed_tool_names={"read_file"},
+        )
+        execute_only = self._names(
+            enabled_toolsets=["hermes-cli"],
+            allowed_tool_names={"execute_code"},
+        )
+
+        assert read_only == {"read_file"}
+        assert execute_only == {"execute_code"}
