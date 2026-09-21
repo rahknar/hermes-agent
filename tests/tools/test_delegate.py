@@ -277,6 +277,7 @@ class TestStripBlockedTools(unittest.TestCase):
                 max_iterations=10,
                 parent_agent=parent,
                 routing_cfg={},
+                specialist_routing_enabled=False,
                 live_deleg_id=None,
                 live_writers=[],
             )
@@ -287,6 +288,135 @@ class TestStripBlockedTools(unittest.TestCase):
             build_child.call_args.kwargs["semantic_role"],
             "coder",
         )
+
+
+    def test_build_children_specialist_route_selects_logical_model(self):
+        parent = _make_mock_parent()
+        task_list = [
+            {
+                "goal": "Analyze the failure",
+                "semantic_role": "analyst",
+            }
+        ]
+        creds = {
+            "provider": None,
+            "base_url": None,
+            "api_key": None,
+            "api_mode": None,
+            "model": "delegation-default",
+        }
+        routing_cfg = {
+            "specialist_routes": {
+                "analyst": "delegation-analyst",
+            }
+        }
+
+        with patch("tools.delegate_tool._build_child_preserving_parent_tools") as build_child:
+            build_child.return_value = MagicMock()
+
+            children, err = _build_children(
+                task_list,
+                [None],
+                creds,
+                top_role="leaf",
+                max_iterations=10,
+                parent_agent=parent,
+                routing_cfg=routing_cfg,
+                specialist_routing_enabled=True,
+                live_deleg_id=None,
+                live_writers=[],
+            )
+
+        self.assertIsNone(err)
+        self.assertEqual(len(children), 1)
+
+        kwargs = build_child.call_args.kwargs
+        self.assertEqual(kwargs["model"], "delegation-analyst")
+        self.assertEqual(kwargs["semantic_role"], "analyst")
+
+    def test_build_children_without_specialist_mapping_preserves_model_fallback(self):
+        parent = _make_mock_parent()
+        task_list = [
+            {
+                "goal": "Analyze the failure",
+                "semantic_role": "analyst",
+            }
+        ]
+        creds = {
+            "provider": None,
+            "base_url": None,
+            "api_key": None,
+            "api_mode": None,
+            "model": "delegation-default",
+        }
+
+        with patch("tools.delegate_tool._build_child_preserving_parent_tools") as build_child:
+            build_child.return_value = MagicMock()
+
+            children, err = _build_children(
+                task_list,
+                [None],
+                creds,
+                top_role="leaf",
+                max_iterations=10,
+                parent_agent=parent,
+                routing_cfg={},
+                specialist_routing_enabled=True,
+                live_deleg_id=None,
+                live_writers=[],
+            )
+
+        self.assertIsNone(err)
+        self.assertEqual(len(children), 1)
+
+        kwargs = build_child.call_args.kwargs
+        self.assertEqual(kwargs["model"], "delegation-default")
+        self.assertEqual(kwargs["semantic_role"], "analyst")
+
+    def test_build_children_disabled_specialist_routing_preserves_internal_model(self):
+        parent = _make_mock_parent()
+        task_list = [
+            {
+                "goal": "Analyze the failure",
+                "semantic_role": "analyst",
+            }
+        ]
+        creds = {
+            "provider": None,
+            "base_url": None,
+            "api_key": None,
+            "api_mode": None,
+            "model": "internally-owned-route",
+        }
+        routing_cfg = {
+            "specialist_routes": {
+                "analyst": "must-not-win",
+            }
+        }
+
+        with patch("tools.delegate_tool._build_child_preserving_parent_tools") as build_child:
+            build_child.return_value = MagicMock()
+
+            children, err = _build_children(
+                task_list,
+                [None],
+                creds,
+                top_role="leaf",
+                max_iterations=10,
+                parent_agent=parent,
+                routing_cfg=routing_cfg,
+                specialist_routing_enabled=False,
+                live_deleg_id=None,
+                live_writers=[],
+            )
+
+        self.assertIsNone(err)
+        self.assertEqual(len(children), 1)
+
+        kwargs = build_child.call_args.kwargs
+        self.assertEqual(kwargs["model"], "internally-owned-route")
+        self.assertEqual(kwargs["semantic_role"], "analyst")
+
 
     def test_mixed_composite_is_subtracted_at_child_assembly(self):
         """A mixed platform bundle must not re-expose blocked leaf tools.
@@ -367,6 +497,7 @@ class TestStripBlockedTools(unittest.TestCase):
                 max_iterations=10,
                 parent_agent=parent,
                 routing_cfg={},
+                specialist_routing_enabled=False,
                 live_deleg_id=None,
                 live_writers=[],
             )
@@ -407,6 +538,7 @@ class TestStripBlockedTools(unittest.TestCase):
                 max_iterations=10,
                 parent_agent=parent,
                 routing_cfg={},
+                specialist_routing_enabled=False,
                 live_deleg_id=None,
                 live_writers=[],
             )

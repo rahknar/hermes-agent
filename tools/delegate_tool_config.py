@@ -362,6 +362,48 @@ def _runtime_provider_credentials(v: dict, explicit_request_overrides) -> dict:
         command=pinned_command, args=list(runtime.get("args") or []),
     )
 
+
+_SPECIALIST_ROLES = frozenset({
+    "analyst",
+    "coder",
+    "expert",
+    "webworker",
+})
+
+
+def _resolve_specialist_model(
+    semantic_role: Optional[str],
+    routing_cfg: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Resolve a semantic specialist role to its configured logical model route.
+
+    Semantic roles describe responsibility; they do not themselves select a
+    model, provider, backend, or delegation capability.  This helper applies
+    the optional Hermes-owned specialist routing policy and returns only the
+    configured logical model route.
+
+    Returning None means no specialist route is configured and allows the
+    existing delegation model / parent-model fallback behavior to continue.
+    """
+    if not semantic_role or not isinstance(routing_cfg, dict):
+        return None
+
+    role = str(semantic_role).strip().lower()
+    if role not in _SPECIALIST_ROLES:
+        return None
+
+    routes = routing_cfg.get("specialist_routes")
+    if not isinstance(routes, dict):
+        return None
+
+    model = routes.get(role)
+    if model is None:
+        return None
+
+    model = str(model).strip()
+    return model or None
+
+
 def _resolve_delegation_credentials(cfg: dict, parent_agent) -> dict:
     """Child credential bundle from the ``delegation`` config section. Three branches: ``base_url`` set → direct
     endpoint (``api_key`` None means inherit the parent's key, so providers keyed outside OPENAI_API_KEY work);

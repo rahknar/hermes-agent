@@ -31,7 +31,7 @@ from tools.delegate_tool_config import (  # noqa: F401
     _DEFAULT_MAX_CONCURRENT_CHILDREN, _get_child_timeout, _get_max_async_children, _get_max_concurrent_children,
     _get_max_spawn_depth, _get_orchestrator_enabled, _get_subagent_approval_callback, _get_worktree_isolation,
     _inherit_parent_capabilities, _load_config, _merge_request_overrides, _resolve_child_credential_pool,
-    _resolve_child_runtime, _resolve_delegation_credentials,
+    _resolve_child_runtime, _resolve_delegation_credentials, _resolve_specialist_model,
     _subagent_auto_approve, _subagent_auto_deny,
 )
 from tools.delegate_tool_dispatch import _Batch, _announce_batch, _capture_origin, _run_batch
@@ -361,6 +361,7 @@ def _run_single_child(
 def _build_children(
     task_list: List[Dict[str, Any]], task_schemas: List[Optional[Dict[str, Any]]], creds: Dict[str, Any], *,
     top_role: str, max_iterations: int, parent_agent, routing_cfg: Dict[str, Any],
+    specialist_routing_enabled: bool,
     live_deleg_id: Optional[str], live_writers: list,
 ) -> tuple[List[tuple], Optional[str]]:
     """Build every child on the main thread (construction is not thread-safe);
@@ -381,13 +382,19 @@ def _build_children(
         _child_context = t.get("context")
         if _task_schema is not None:
             _child_context = append_output_contract(_child_context, _task_schema)
+        semantic_role = t.get("semantic_role")
+        specialist_model = (
+            _resolve_specialist_model(semantic_role, routing_cfg)
+            if specialist_routing_enabled
+            else None
+        )
         try:
             child = _build_child_preserving_parent_tools(
                 task_index=i, goal=t["goal"], context=_child_context,
                 toolsets=None,  # always inherit the parent's toolsets
-                model=creds["model"], max_iterations=max_iterations, task_count=len(task_list),
+                model=specialist_model or creds["model"], max_iterations=max_iterations, task_count=len(task_list),
                 parent_agent=parent_agent, role=_normalize_role(t.get("role") or top_role),
-                semantic_role=t.get("semantic_role"), **overrides,
+                semantic_role=semantic_role, **overrides,
             )
         except ValueError as exc:
             return [], str(exc)
@@ -487,7 +494,9 @@ def delegate_task(
 
     children, err = _build_children(
         task_list, task_schemas, creds, top_role=top_role, max_iterations=default_max_iter, parent_agent=parent_agent,
-        routing_cfg=routing_cfg, live_deleg_id=live_deleg_id, live_writers=live_writers,
+        routing_cfg=routing_cfg,
+        specialist_routing_enabled=credentials_cfg is None,
+        live_deleg_id=live_deleg_id, live_writers=live_writers,
     )
     if err:
         return tool_error(err)
