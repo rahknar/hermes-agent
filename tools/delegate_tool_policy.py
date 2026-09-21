@@ -1,13 +1,19 @@
-"""Semantic specialist tool-authority policy for delegated children.
+"""Semantic specialist policy for delegated children.
 
-Semantic tool authority and depth-derived delegation capability are separate
-axes.  This module composes them into the concrete-name authority ceiling
-consumed by AIAgent/model_tools.
+Semantic tool authority, execution environment, and depth-derived delegation
+capability are separate axes. This module owns the semantic-role policy for
+those axes without coupling them to logical model-route selection.
 """
 
 from __future__ import annotations
 
 from typing import Optional, Set
+
+
+_SPECIALIST_EXECUTION_POLICY = {
+    "analyst": {"env_type": "docker"},
+    "coder": {"env_type": "docker"},
+}
 
 
 _SPECIALIST_TOOL_POLICY = {
@@ -31,6 +37,25 @@ _SPECIALIST_TOOL_POLICY = {
         "web_extract",
     }),
 }
+
+
+def _specialist_execution_overrides(
+    semantic_role: Optional[str],
+) -> Optional[dict[str, str]]:
+    """Return execution-environment overrides for a specialist role.
+
+    None means no recognized execution policy applies. Returned dictionaries
+    are copies so per-child composition cannot mutate the static policy.
+    """
+    if not semantic_role:
+        return None
+
+    role = str(semantic_role).strip().lower()
+    policy = _SPECIALIST_EXECUTION_POLICY.get(role)
+    if policy is None:
+        return None
+
+    return dict(policy)
 
 
 def _specialist_allowed_tool_names(

@@ -166,6 +166,52 @@ def test_semantic_policies_never_grant_delegation_capability():
 
 
 # -------------------------------------------------------------------------
+# Specialist execution-environment policy
+# -------------------------------------------------------------------------
+
+def test_specialist_execution_policy_routes_execution_roles_to_docker():
+    from tools.delegate_tool_policy import _specialist_execution_overrides
+
+    assert _specialist_execution_overrides("analyst") == {"env_type": "docker"}
+    assert _specialist_execution_overrides("coder") == {"env_type": "docker"}
+
+
+def test_specialist_execution_policy_normalizes_role_name():
+    from tools.delegate_tool_policy import _specialist_execution_overrides
+
+    assert _specialist_execution_overrides("  AnAlYsT  ") == {"env_type": "docker"}
+
+
+def test_specialist_execution_policy_does_not_sandbox_nonexecution_specialists():
+    from tools.delegate_tool_policy import _specialist_execution_overrides
+
+    assert _specialist_execution_overrides("expert") is None
+    assert _specialist_execution_overrides("webworker") is None
+
+
+def test_specialist_execution_policy_preserves_generic_children():
+    from tools.delegate_tool_policy import _specialist_execution_overrides
+
+    assert _specialist_execution_overrides(None) is None
+    assert _specialist_execution_overrides("") is None
+    assert _specialist_execution_overrides("not-a-role") is None
+
+
+def test_specialist_execution_policy_returns_detached_copy():
+    from tools.delegate_tool_policy import _specialist_execution_overrides
+
+    first = _specialist_execution_overrides("analyst")
+    second = _specialist_execution_overrides("analyst")
+
+    assert first is not second
+
+    first["env_type"] = "local"
+
+    assert second == {"env_type": "docker"}
+    assert _specialist_execution_overrides("analyst") == {"env_type": "docker"}
+
+
+# -------------------------------------------------------------------------
 # _build_child_agent integration
 # -------------------------------------------------------------------------
 

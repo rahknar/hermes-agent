@@ -601,6 +601,18 @@ class _ChildRun:
             record_session_cwd(self.child_task_id, get_session_cwd(self.parent_task_id))
             register_container_alias(self.child_task_id, self.parent_task_id)
 
+        # Semantic specialist execution policy is applied to the child's raw
+        # task identity. Isolation overrides then take precedence over the
+        # ordinary child->parent container alias without changing generic
+        # delegation behavior.
+        from tools.delegate_tool_policy import _specialist_execution_overrides
+        execution_overrides = _specialist_execution_overrides(
+            getattr(self.child, "semantic_role", None)
+        )
+        if execution_overrides is not None:
+            from tools.terminal_tool import register_task_env_overrides
+            register_task_env_overrides(self.child_task_id, execution_overrides)
+
         self.worktree_info = _create_isolated_worktree(self.parent_agent, self.parent_task_id, self.subagent_id)
         if self.worktree_info is not None:
             with _quiet("worktree cwd seed failed: %s"):
