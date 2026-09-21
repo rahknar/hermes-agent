@@ -1885,16 +1885,25 @@ def _build_context_engine(agent, _agent_cfg, cs, _custom_providers, _effective_c
 
 
 def _enforce_minimum_context(agent):
-    # Reject windows below the 64K floor needed for reliable tool-calling; an explicit
-    # positive model.context_length on LM Studio is allowed below the floor.
+    # Reject windows below the 64K floor needed for reliable tool-calling.
+    # Delegated children may use their route's truthful smaller context window;
+    # normal context/compression safety still applies against that real window.
+    from agent.delegation_context import is_delegated_child_context
+
     _ctx = getattr(agent.context_compressor, "context_length", 0)
+    _allow_delegated_child_below_floor = is_delegated_child_context()
     _allow_lmstudio_explicit_below_floor = (
         str(agent.provider or "").strip().lower() == "lmstudio"
         and isinstance(agent._config_context_length, int)
         and not isinstance(agent._config_context_length, bool)
         and agent._config_context_length > 0
     )
-    if _ctx and _ctx < MINIMUM_CONTEXT_LENGTH and not _allow_lmstudio_explicit_below_floor:
+    if (
+        _ctx
+        and _ctx < MINIMUM_CONTEXT_LENGTH
+        and not _allow_delegated_child_below_floor
+        and not _allow_lmstudio_explicit_below_floor
+    ):
         raise ValueError(
             f"Model {agent.model} has a context window of {_ctx:,} tokens, "
             f"which is below the minimum {MINIMUM_CONTEXT_LENGTH:,} required "
