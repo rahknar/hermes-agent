@@ -330,7 +330,12 @@ def _create_isolated_worktree(parent_agent: Any, parent_task_id: Any, subagent_i
         )
     return None
 
-def _defer_close_after_timeout(child: Any, child_future: Any) -> None:
+def _defer_close_after_timeout(
+    child: Any,
+    child_future: Any,
+    *,
+    child_task_id: str,
+) -> None:
     """Hand ``child.close()`` to a Future done-callback and drain its transports.
 
     The interrupt is cooperative: the worker still runs its finally path, so closing now could close SQLite under its
@@ -340,7 +345,14 @@ def _defer_close_after_timeout(child: Any, child_future: Any) -> None:
     sweep + one delayed re-sweep for a connection opened in between; a worker that still won't settle keeps its
     resources until process exit.
     """
-    child_future.add_done_callback(lambda _done: _close_child(child, "Failed to close timed-out child after worker exit"))
+    def _close_after_worker_exit(_done: Any) -> None:
+        _close_child(child, "Failed to close timed-out child after worker exit")
+        _cleanup_specialist_execution(
+            child_task_id,
+            getattr(child, "semantic_role", None),
+        )
+
+    child_future.add_done_callback(_close_after_worker_exit)
     # Bounded drain (#94248 native half): the deferred close above only fires once the abandoned worker
     # unwinds, but that worker is typically parked inside an in-flight OpenSSL read (Codex / httpx). Never
     # hard-close that transport from this thread — releasing FDs under a live SSL read is the #29507/#70773
@@ -544,6 +556,31 @@ def _build_result_entry(
     return entry
 
 
+def _cleanup_specialist_execution(
+    child_task_id: str,
+    semantic_role: Optional[str],
+) -> None:
+    """Force-remove an execution specialist's isolated environment.
+
+    Environment teardown must happen before clearing the raw task override:
+    that override is what keeps the specialist child from collapsing through
+    its ordinary child->parent environment alias.
+    """
+    if not child_task_id:
+        return
+
+    from tools.delegate_tool_policy import _specialist_execution_overrides
+
+    if _specialist_execution_overrides(semantic_role) is None:
+        return
+
+    from tools.terminal_tool_lifecycle import cleanup_vm
+    from tools.terminal_tool import clear_task_env_overrides
+
+    cleanup_vm(child_task_id, force_remove=True)
+    clear_task_env_overrides(child_task_id)
+
+
 @dataclass
 class _ChildRun:
     """State of one child run, shared by every phase of ``_run_single_child``.
@@ -729,7 +766,11 @@ class _ChildRun:
         self.finish_failed(_error_entry, _late_pending_steer, preview=f"Timed out after {duration}s" if is_timeout else str(exc))
         close_deferred = is_timeout and not future.done()
         if close_deferred:
-            _defer_close_after_timeout(child, future)
+            _defer_close_after_timeout(
+                child,
+                future,
+                child_task_id=self.child_task_id,
+            )
         return None, _error_entry, close_deferred
 
     def append_sibling_write_reminder(self, entry: Dict[str, Any]) -> None:
@@ -834,6 +875,10 @@ class _ChildRun:
         # processes, httpx clients) so subagent subprocesses don't outlive the delegation.
         if not close_deferred:
             _close_child(child, "Failed to close child agent after delegation")
+            _cleanup_specialist_execution(
+                self.child_task_id,
+                getattr(child, "semantic_role", None),
+            )
 
         # The AIAgent turn boundary normally closes the child scope itself. This fallback covers failures before that
         # boundary starts, but must not pop a scope while a timed-out child worker is still unwinding.
