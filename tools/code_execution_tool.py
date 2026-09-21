@@ -406,6 +406,7 @@ def _get_or_create_env(task_id: str):
         _active_environments, _env_lock, _get_env_config, _last_activity,
         _start_cleanup_thread, _creation_locks, _creation_locks_lock, _task_env_overrides,
         _resolve_container_task_id, _resolve_task_host_cwd, _is_container_backend, _select_image,
+        resolve_task_env_type,
     )
     effective_task_id = _resolve_container_task_id(task_id)
     def _cached():
@@ -416,15 +417,17 @@ def _get_or_create_env(task_id: str):
         return env
     env = _cached()
     if env is not None:
-        return env, _get_env_config()["env_type"]
+        config = _get_env_config()
+        return env, resolve_task_env_type(task_id, config)
     with _creation_locks_lock:
         task_lock = _creation_locks.setdefault(effective_task_id, threading.Lock())
     with task_lock:
         env = _cached()
         if env is not None:
-            return env, _get_env_config()["env_type"]
+            config = _get_env_config()
+            return env, resolve_task_env_type(task_id, config)
         config = _get_env_config()
-        env_type = config["env_type"]
+        env_type = resolve_task_env_type(task_id, config)
         overrides = _task_env_overrides.get(effective_task_id, {})
         container_config = None
         if _is_container_backend(env_type):
@@ -701,15 +704,19 @@ def execute_code(
                 "it could complete (SIGTERM propagates to child processes). "
                 "Run the lifecycle command from a shell outside the gateway."
             )
-    from tools.terminal_tool import _get_env_config, _docker_has_host_access
+    from tools.terminal_tool import (
+        _get_env_config,
+        _docker_has_host_access,
+        resolve_task_env_type,
+    )
     _env_config = _get_env_config()
-    env_type = _env_config["env_type"]
+    env_type = resolve_task_env_type(task_id, _env_config)
     # Arbitrary Python never passes through terminal()/DANGEROUS_PATTERNS, so guard the whole
     # script before either dispatch path spawns it — in this (tool-executor) thread, which holds
     # the session context. A Docker sandbox with host bind mounts gets no container fast-path.
     # See #30882.
     from tools.approval import check_execute_code_guard
-    _guard = check_execute_code_guard(code, env_type, has_host_access=_docker_has_host_access(_env_config))
+    _guard = check_execute_code_guard(code, env_type, has_host_access=_docker_has_host_access(_env_config, env_type))
     if not _guard.get("approved", False):
         return _error_result(_guard.get("message") or "execute_code blocked by approval guard.")
     # Clear a stale interrupt bit that landed during the blocking approval-wait so it can't

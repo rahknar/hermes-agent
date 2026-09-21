@@ -924,3 +924,145 @@ class TestRpcTokenAuthorization(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTaskEnvTypeOverride:
+    """Per-task env_type must control execute_code end to end."""
+
+    def test_get_or_create_env_uses_task_env_type_override(self):
+        import tools.code_execution_tool as cet
+
+        config = {
+            "env_type": "local",
+            "cwd": ".",
+            "timeout": 60,
+            "docker_image": "test:latest",
+        }
+        overrides = {
+            "bench-docker": {"env_type": "docker"},
+        }
+        active = {}
+        last_activity = {}
+        creation_locks = {}
+
+        fake_env = MagicMock()
+        seen = {}
+
+        def fake_create_environment(**kwargs):
+            seen.update(kwargs)
+            return fake_env
+
+        with patch("tools.terminal_tool._get_env_config", return_value=config), \
+             patch("tools.terminal_tool._task_env_overrides", overrides), \
+             patch("tools.terminal_tool._active_environments", active), \
+             patch("tools.terminal_tool._last_activity", last_activity), \
+             patch("tools.terminal_tool._creation_locks", creation_locks), \
+             patch("tools.terminal_tool._resolve_container_task_id",
+                   return_value="bench-docker"), \
+             patch("tools.terminal_tool._resolve_task_host_cwd",
+                   return_value=None), \
+             patch("tools.terminal_tool._start_cleanup_thread"), \
+             patch("tools.terminal_tool_backends._create_environment",
+                   side_effect=fake_create_environment), \
+             patch("tools.terminal_tool_backends._container_config_from_config",
+                   return_value={"network": False}):
+            env, env_type = cet._get_or_create_env("bench-docker")
+
+        assert env is fake_env
+        assert env_type == "docker"
+        assert seen["env_type"] == "docker"
+
+
+    def test_get_or_create_env_cache_hit_reports_effective_task_backend(self):
+        import tools.code_execution_tool as cet
+
+        config = {
+            "env_type": "local",
+            "cwd": ".",
+            "timeout": 60,
+            "docker_image": "test:latest",
+        }
+        fake_env = MagicMock()
+
+        with patch("tools.terminal_tool._get_env_config", return_value=config), \
+             patch("tools.terminal_tool._task_env_overrides",
+                   {"bench-docker": {"env_type": "docker"}}), \
+             patch("tools.terminal_tool._active_environments",
+                   {"bench-docker": fake_env}), \
+             patch("tools.terminal_tool._last_activity", {}), \
+             patch("tools.terminal_tool._resolve_container_task_id",
+                   return_value="bench-docker"):
+            env, env_type = cet._get_or_create_env("bench-docker")
+
+        assert env is fake_env
+        assert env_type == "docker"
+
+
+    def test_execute_code_task_docker_override_uses_remote_path(self):
+        import tools.code_execution_tool as cet
+
+        config = {
+            "env_type": "local",
+            "cwd": ".",
+            "timeout": 60,
+            "docker_image": "test:latest",
+        }
+
+        with patch("tools.terminal_tool._get_env_config", return_value=config), \
+             patch("tools.terminal_tool.resolve_task_overrides",
+                   return_value={"env_type": "docker"}), \
+             patch("tools.terminal_tool._docker_has_host_access",
+                   return_value=False), \
+             patch("tools.approval.check_execute_code_guard",
+                   return_value={"approved": True}), \
+             patch("tools.process_registry._is_supervised_gateway_process",
+                   return_value=False), \
+             patch.object(cet, "_execute_remote",
+                          return_value='{"status":"success"}') as remote, \
+             patch("tools.code_kernel.execute_in_session_kernel") as local:
+            cet.execute_code(
+                "print('sandbox')",
+                task_id="bench-docker",
+                enabled_tools=[],
+            )
+
+        remote.assert_called_once()
+        local.assert_not_called()
+
+
+def test_execute_code_task_docker_override_guard_uses_effective_backend():
+    """Approval guard host-access classification must match the task backend."""
+    import tools.code_execution_tool as cet
+
+    config = {
+        "env_type": "local",
+        "cwd": ".",
+        "timeout": 60,
+        "docker_image": "test:latest",
+        "docker_volumes": ["/host/secret:/workspace/secret:ro"],
+        "docker_mount_cwd_to_workspace": False,
+    }
+    seen = {}
+
+    def fake_guard(code, env_type, *, has_host_access):
+        seen["env_type"] = env_type
+        seen["has_host_access"] = has_host_access
+        return {"approved": True}
+
+    with patch("tools.terminal_tool._get_env_config", return_value=config), \
+         patch("tools.terminal_tool.resolve_task_overrides",
+               return_value={"env_type": "docker"}), \
+         patch("tools.approval.check_execute_code_guard",
+               side_effect=fake_guard), \
+         patch("tools.process_registry._is_supervised_gateway_process",
+               return_value=False), \
+         patch.object(cet, "_execute_remote",
+                      return_value='{"status":"success"}'):
+        cet.execute_code(
+            "print('sandbox')",
+            task_id="bench-docker",
+            enabled_tools=[],
+        )
+
+    assert seen["env_type"] == "docker"
+    assert seen["has_host_access"] is True

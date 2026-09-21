@@ -134,9 +134,13 @@ def _docker_volume_uses_host_path(volume_spec: str) -> bool:
     )
 
 
-def _docker_has_host_access(config: Dict[str, Any]) -> bool:
-    """Return True when a Docker sandbox exposes host paths through bind mounts."""
-    if config.get("env_type") != "docker":
+def _docker_has_host_access(
+    config: Dict[str, Any],
+    env_type: Optional[str] = None,
+) -> bool:
+    """Return True when the effective Docker backend exposes host bind mounts."""
+    effective_env_type = env_type if env_type is not None else config.get("env_type")
+    if effective_env_type != "docker":
         return False
     if config.get("host_cwd") and config.get("docker_mount_cwd_to_workspace"):
         return True
@@ -470,6 +474,27 @@ _IMAGE_KEY_BY_BACKEND = {
 }
 
 
+def resolve_task_env_type(
+    task_id: Optional[str],
+    config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the effective execution backend for *task_id*.
+
+    A non-empty per-task ``env_type`` isolation override wins over the
+    configured terminal backend. Tasks without such an override retain the
+    configured backend.
+    """
+    if config is None:
+        config = _get_env_config()
+
+    overrides = resolve_task_overrides(task_id)
+    override = overrides.get("env_type")
+    if isinstance(override, str) and override.strip():
+        return override.strip()
+
+    return config["env_type"]
+
+
 def _select_image(env_type: str, overrides: Dict[str, Any], config: Dict[str, Any]) -> str:
     """Image for *env_type*: per-task override first, then config; "" for imageless backends."""
     key = _IMAGE_KEY_BY_BACKEND.get(env_type)
@@ -505,7 +530,8 @@ def _resolve_task_host_cwd(config: Dict[str, Any], task_id: Optional[str]) -> Op
     Overrides tagged ``cwd_source: "process"`` are refused for the same reason;
     ``cwd_source: "session"`` or untagged (ACP/RL) overrides mount.
     """
-    if config.get("env_type") != "docker" or not config.get("docker_mount_cwd_to_workspace"):
+    env_type = resolve_task_env_type(task_id, config)
+    if env_type != "docker" or not config.get("docker_mount_cwd_to_workspace"):
         return None
     # Top-level CLI parent ("default") is a single-session process — legacy behavior.
     if not _docker_session_isolation_enabled() or _resolve_container_task_id(task_id) == "default":
@@ -853,7 +879,7 @@ def _run_approval_guards(command: str, env_type: str, config: Dict[str, Any], *,
     gateway approval)."""
     if force:
         return _ApprovalVerdict(approved_run=True)
-    approval = _check_all_guards(command, env_type, has_host_access=_docker_has_host_access(config))
+    approval = _check_all_guards(command, env_type, has_host_access=_docker_has_host_access(config, env_type))
     if not approval["approved"]:
         if approval.get("status") == "pending_approval":  # gateway ask mode
             raise _Rejected(_error_json(
@@ -922,7 +948,7 @@ def _plan_execution(
         ))
 
     config = _get_env_config()
-    env_type = "local" if _host_local else config["env_type"]
+    env_type = "local" if _host_local else resolve_task_env_type(task_id, config)
 
     # Fail closed under a refusal scope: the routed profile's terminal
     # policy could not be resolved, so running with the launch process's

@@ -11,6 +11,7 @@ def _capture_create(monkeypatch):
     seen = {}
 
     def _fake_create(config, env_type, **kwargs):
+        seen["env_type"] = env_type
         seen["cwd"] = kwargs["cwd"]
         return object()
 
@@ -19,6 +20,41 @@ def _capture_create(monkeypatch):
     monkeypatch.setattr(terminal_tool, "_resolve_task_host_cwd", lambda *a, **k: None)
     monkeypatch.setattr(terminal_tool, "get_session_cwd", lambda _tid: None)
     return seen
+
+
+
+def test_file_ops_uses_task_env_type_override(monkeypatch):
+    """File operations must use the same effective backend as terminal."""
+    monkeypatch.setattr(
+        terminal_tool,
+        "_get_env_config",
+        lambda: {
+            "env_type": "local",
+            "cwd": ".",
+            "timeout": 60,
+            "docker_image": "test:latest",
+        },
+    )
+    monkeypatch.setattr(
+        terminal_tool,
+        "resolve_task_overrides",
+        lambda _tid: {"env_type": "docker"},
+    )
+    monkeypatch.setattr(
+        terminal_tool,
+        "_resolve_task_host_cwd",
+        lambda *_args, **_kwargs: None,
+    )
+
+    seen = _capture_create(monkeypatch)
+
+    env_type, _ = ft._create_terminal_env_for_file_ops(
+        "bench-docker",
+        "bench-docker",
+    )
+
+    assert env_type == "docker"
+    assert seen["env_type"] == "docker"
 
 
 def test_plugin_container_backend_gets_the_same_host_cwd_guard_as_docker(monkeypatch):

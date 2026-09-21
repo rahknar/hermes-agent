@@ -55,6 +55,101 @@ def test_cwd_only_override_collapses_to_default():
         terminal_tool.clear_task_env_overrides("acp-session-abc")
 
 
+def test_resolve_task_env_type_override_wins(monkeypatch):
+    """A task env_type override selects its execution backend, not only its cache key."""
+    monkeypatch.setenv("TERMINAL_ENV", "local")
+    terminal_tool.register_task_env_overrides(
+        "bench-docker", {"env_type": "docker"}
+    )
+    try:
+        config = terminal_tool._get_env_config()
+        assert terminal_tool.resolve_task_env_type(
+            "bench-docker", config
+        ) == "docker"
+    finally:
+        terminal_tool.clear_task_env_overrides("bench-docker")
+
+
+def test_resolve_task_env_type_without_override_uses_config(monkeypatch):
+    """Tasks without an env_type override retain the configured backend."""
+    monkeypatch.setenv("TERMINAL_ENV", "local")
+    config = terminal_tool._get_env_config()
+
+    assert terminal_tool.resolve_task_env_type(
+        "ordinary-task", config
+    ) == "local"
+
+
+
+
+def test_plan_execution_uses_task_env_type_override(monkeypatch):
+    """Terminal planning must use the task's effective backend."""
+    config = {
+        "env_type": "local",
+        "cwd": ".",
+        "timeout": 180,
+        "docker_image": "test:latest",
+        "docker_mount_cwd_to_workspace": False,
+    }
+
+    monkeypatch.setattr(terminal_tool, "_get_env_config", lambda: config)
+    monkeypatch.setattr(
+        terminal_tool,
+        "_resolve_task_host_cwd",
+        lambda _config, _task_id: None,
+    )
+
+    terminal_tool.register_task_env_overrides(
+        "bench-docker", {"env_type": "docker"}
+    )
+    try:
+        plan = terminal_tool._plan_execution(
+            "true",
+            task_id="bench-docker",
+            timeout=None,
+            background=False,
+            _host_local=False,
+        )
+        assert plan.env_type == "docker"
+    finally:
+        terminal_tool.clear_task_env_overrides("bench-docker")
+
+
+
+def test_plan_execution_host_local_ignores_task_env_type_override(monkeypatch):
+    """Explicit control-plane host-local execution must remain local."""
+    config = {
+        "env_type": "local",
+        "cwd": ".",
+        "timeout": 180,
+        "docker_image": "test:latest",
+        "docker_mount_cwd_to_workspace": False,
+    }
+
+    monkeypatch.setattr(terminal_tool, "_get_env_config", lambda: config)
+    monkeypatch.setattr(
+        terminal_tool,
+        "_resolve_task_host_cwd",
+        lambda _config, _task_id: None,
+    )
+
+    terminal_tool.register_task_env_overrides(
+        "bench-docker", {"env_type": "docker"}
+    )
+    try:
+        plan = terminal_tool._plan_execution(
+            "true",
+            task_id="bench-docker",
+            timeout=None,
+            background=False,
+            _host_local=True,
+        )
+        assert plan.env_type == "local"
+        assert plan.effective_task_id.startswith("host-local-")
+    finally:
+        terminal_tool.clear_task_env_overrides("bench-docker")
+
+
 def test_env_type_override_keeps_own_id():
     """env_type is an isolation key — must trigger per-task container."""
     terminal_tool.register_task_env_overrides(
@@ -309,3 +404,58 @@ def test_shared_key_ignored_outside_persistent_docker(monkeypatch):
         assert terminal_tool._resolve_container_task_id(None) == "session:sess-A"
     finally:
         clear_session_vars(tokens)
+
+
+def test_terminal_guard_uses_effective_backend_for_host_access(monkeypatch):
+    """Terminal approval host-access classification must match effective backend."""
+    config = {
+        "env_type": "local",
+        "host_cwd": None,
+        "docker_mount_cwd_to_workspace": False,
+        "docker_volumes": ["/host/secret:/workspace/secret:ro"],
+    }
+    seen = {}
+
+    def fake_guards(command, env_type, *, has_host_access=False):
+        seen["command"] = command
+        seen["env_type"] = env_type
+        seen["has_host_access"] = has_host_access
+        return {"approved": True}
+
+    monkeypatch.setattr(terminal_tool, "_check_all_guards", fake_guards)
+
+    terminal_tool._run_approval_guards(
+        "true",
+        "docker",
+        config,
+        force=False,
+    )
+
+    assert seen["env_type"] == "docker"
+    assert seen["has_host_access"] is True
+
+
+def test_task_docker_override_uses_docker_host_cwd_policy(monkeypatch):
+    """Task-local Docker must apply Docker workspace-mount policy."""
+    config = {
+        "env_type": "local",
+        "docker_mount_cwd_to_workspace": True,
+        "host_cwd": "/host/project",
+        "container_persistent": True,
+    }
+
+    monkeypatch.setattr(
+        terminal_tool,
+        "resolve_task_overrides",
+        lambda _tid: {"env_type": "docker"},
+    )
+    monkeypatch.setattr(
+        terminal_tool,
+        "_docker_session_isolation_enabled",
+        lambda: False,
+    )
+
+    assert terminal_tool._resolve_task_host_cwd(
+        config,
+        "bench-docker",
+    ) == "/host/project"
