@@ -2178,6 +2178,7 @@ class TestConcurrentToolExecution:
                 skip_tool_request_middleware=True,
                 enabled_toolsets=agent.enabled_toolsets,
                 disabled_toolsets=agent.disabled_toolsets,
+                allowed_tool_names=agent._allowed_tool_names,
                 tool_request_middleware_trace=[],
             )
             assert result == "result"
@@ -7212,3 +7213,14 @@ class TestAllowedToolNamesPlumbing:
         restricted = self._build_agent(set())
 
         assert set(restricted.valid_tool_names) == set()
+        assert restricted._allowed_tool_names == frozenset()
+
+    def test_allowed_tool_names_is_retained_as_immutable_authority_snapshot(self):
+        allowed = {"read_file"}
+        restricted = self._build_agent(allowed)
+
+        assert restricted._allowed_tool_names == frozenset({"read_file"})
+
+        allowed.add("terminal")
+
+        assert restricted._allowed_tool_names == frozenset({"read_file"})

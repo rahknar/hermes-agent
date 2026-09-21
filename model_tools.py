@@ -704,7 +704,8 @@ def _emit_post_tool_call_hook(
 
 
 def _dispatch_bridge_tool(function_name: str, function_args: Dict[str, Any],
-                          enabled_toolsets: Optional[List[str]], disabled_toolsets: Optional[List[str]]):
+                          enabled_toolsets: Optional[List[str]], disabled_toolsets: Optional[List[str]],
+                          allowed_tool_names: Optional[set[str]] = None):
     """Handle a Tool Search bridge call (tool_search / tool_describe / tool_call).
 
     None when *function_name* is not a bridge tool; ``(result, None)`` for a
@@ -720,8 +721,13 @@ def _dispatch_bridge_tool(function_name: str, function_args: Dict[str, Any],
     # Un-collapsed catalog scoped to the session's toolsets, so a restricted
     # session (subagent, kanban worker) can't reach the whole registry via the bridge.
     try:
-        current_defs = get_tool_definitions(enabled_toolsets=enabled_toolsets, disabled_toolsets=disabled_toolsets,
-                                            quiet_mode=True, skip_tool_search_assembly=True) or []
+        current_defs = get_tool_definitions(
+            enabled_toolsets=enabled_toolsets,
+            disabled_toolsets=disabled_toolsets,
+            quiet_mode=True,
+            skip_tool_search_assembly=True,
+            allowed_tool_names=allowed_tool_names,
+        ) or []
     except Exception:
         current_defs = []
     args = function_args or {}
@@ -877,6 +883,7 @@ def handle_function_call(
     skip_pre_tool_call_hook: bool = False, skip_tool_request_middleware: bool = False,
     skip_tool_execution_middleware: bool = False, tool_request_middleware_trace: Optional[List[Dict[str, Any]]] = None,
     enabled_toolsets: Optional[List[str]] = None, disabled_toolsets: Optional[List[str]] = None,
+    allowed_tool_names: Optional[set[str]] = None,
 ) -> str:
     """Route a tool call through hooks/middleware to the registry; returns a JSON string.
 
@@ -903,7 +910,13 @@ def handle_function_call(
     # Tool Search bridge: tool_search / tool_describe are catalog reads handled
     # inline; tool_call is unwrapped so every downstream hook (pre/post, edit
     # approval, guardrails) sees the real tool name, never the bridge.
-    bridged = _dispatch_bridge_tool(function_name, function_args, enabled_toolsets, disabled_toolsets)
+    bridged = _dispatch_bridge_tool(
+        function_name,
+        function_args,
+        enabled_toolsets,
+        disabled_toolsets,
+        allowed_tool_names=allowed_tool_names,
+    )
     if bridged is not None:
         result, underlying = bridged
         if underlying is None:
@@ -915,13 +928,23 @@ def handle_function_call(
                 underlying[1]["calls"], ids, user_task=user_task,
                 enabled_tools=enabled_tools, middleware_trace=trace,
                 enabled_toolsets=enabled_toolsets, disabled_toolsets=disabled_toolsets,
+                allowed_tool_names=allowed_tool_names,
             ), duration_ms=_elapsed_ms(start))
         return handle_function_call(
             *underlying, **asdict(ids), user_task=user_task, enabled_tools=enabled_tools,
             skip_pre_tool_call_hook=skip_pre_tool_call_hook, skip_tool_request_middleware=skip_tool_request_middleware,
             skip_tool_execution_middleware=skip_tool_execution_middleware, tool_request_middleware_trace=list(trace),
             enabled_toolsets=enabled_toolsets, disabled_toolsets=disabled_toolsets,
+            allowed_tool_names=allowed_tool_names,
         )
+
+    # Execution-time enforcement of the same concrete authority ceiling used
+    # to build the model-facing schema. This prevents injected, repaired, bridged,
+    # or otherwise undisclosed tool names from exceeding the agent's authority.
+    if allowed_tool_names is not None and function_name not in allowed_tool_names:
+        return _emit(tool_error(
+            f"'{function_name}' is not available in this session."
+        ))
 
     from tools.tool_gateway.names import is_connector_name, parse_connector_name
     if function_name == "manage_connections" or is_connector_name(function_name):

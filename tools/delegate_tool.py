@@ -50,6 +50,10 @@ from tools.delegate_tool_tasks import _coerce_task_schemas, _normalize_task_list
 from tools.delegate_tool_toolsets import (  # noqa: F401
     DELEGATE_BLOCKED_TOOLS, _expand_parent_toolsets, _resolve_child_toolsets, _strip_blocked_tools,
 )
+from tools.delegate_tool_policy import (
+    _compose_specialist_tool_ceiling,
+    _specialist_allowed_tool_names,
+)
 from tools.delegate_tool_results import (  # noqa: F401
     _apply_summary_budget, _build_child_preserving_parent_tools, _run_child_lifecycle, _summarize_tool_arguments,
 )
@@ -199,6 +203,11 @@ def _build_child_agent(
     # as auxiliary.review.
     delegation_cfg = _load_config()
     child_toolsets, child_disabled_toolsets = _resolve_child_toolsets(parent_agent, toolsets, effective_role)
+    specialist_allowed_tool_names = _specialist_allowed_tool_names(semantic_role)
+    allowed_tool_names = _compose_specialist_tool_ceiling(
+        specialist_allowed_tool_names,
+        effective_role,
+    )
     child_prompt = _build_child_system_prompt(
         goal, context, workspace_path=_resolve_workspace_hint(parent_agent), role=effective_role,
         max_spawn_depth=max_spawn, child_depth=child_depth, semantic_role=semantic_role,
@@ -234,7 +243,8 @@ def _build_child_agent(
         try:
             child = AIAgent(
                 **rt, semantic_role=semantic_role, max_iterations=max_iterations, prefill_messages=getattr(parent_agent, "prefill_messages", None),
-                enabled_toolsets=child_toolsets, disabled_toolsets=child_disabled_toolsets, quiet_mode=True,
+                enabled_toolsets=child_toolsets, disabled_toolsets=child_disabled_toolsets,
+                allowed_tool_names=allowed_tool_names, quiet_mode=True,
                 ephemeral_system_prompt=child_prompt, log_prefix=f"[subagent-{task_index}]", platform="subagent",
                 skip_context_files=True, skip_memory=True, clarify_callback=None,
                 thinking_callback=(

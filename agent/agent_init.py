@@ -1044,6 +1044,14 @@ def _init_fallback_chain(agent, fallback_model):
 
 
 def _load_tools(agent, enabled_toolsets, disabled_toolsets, allowed_tool_names=None):
+    # Preserve the initialization-time concrete authority ceiling for execution-time
+    # enforcement. None means unrestricted; a concrete set is immutable once loaded.
+    agent._allowed_tool_names = (
+        frozenset(allowed_tool_names)
+        if allowed_tool_names is not None
+        else None
+    )
+
     # A multiplexed gateway may have switched HERMES_HOME since model_tools was imported;
     # make sure this profile's plugins are discovered before the tool snapshot.
     try:
