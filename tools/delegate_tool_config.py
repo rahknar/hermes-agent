@@ -110,6 +110,25 @@ def _get_worktree_isolation() -> bool:
     working copy. Git-only and local-backend-only; otherwise silently ignored."""
     return bool(_cfg().get("worktree_isolation", False))
 
+
+def _get_specialist_workspace_repo() -> Optional[str]:
+    """Return the configured source repository for contained specialist workspaces.
+
+    delegation.specialist_workspace.repo identifies the host-side staging
+    repository from which mandatory Analyst/Coder Working Workspaces are created.
+    Repository existence and provenance are validated at workspace creation time.
+    """
+    workspace = _cfg().get("specialist_workspace")
+    if not isinstance(workspace, dict):
+        return None
+
+    repo = workspace.get("repo")
+    if not isinstance(repo, str):
+        return None
+
+    repo = repo.strip()
+    return repo or None
+
 def _get_max_async_children() -> int:
     """Concurrency cap for background delegations == delegation.max_concurrent_children. At capacity a new async
     dispatch is REJECTED (not queued) so a runaway model can't pile up unbounded background work; the caller then

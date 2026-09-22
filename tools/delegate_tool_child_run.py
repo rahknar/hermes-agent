@@ -309,15 +309,62 @@ def _register_child(
     })
     return _subagent_id
 
-def _create_isolated_worktree(parent_agent: Any, parent_task_id: Any, subagent_id: Optional[str]):
-    """Opt-in worktree isolation: own git worktree off the parent's HEAD (the
-    child's terminal starts there). Git-only, local-backend-only; failures
-    degrade silently to the shared workspace. Returns the worktree info or None."""
+def _create_isolated_worktree(
+    parent_agent: Any,
+    parent_task_id: Any,
+    subagent_id: Optional[str],
+    *,
+    source_repo: Optional[str] = None,
+    required: bool = False,
+):
+    """Create an isolated child worktree.
+
+    Generic delegation preserves the historical behavior: derive the repository
+    from the parent workspace, require the globally configured local backend,
+    and degrade silently when isolation cannot be established.
+
+    A required workspace is a fail-closed specialist boundary.  Its source
+    repository is explicit, host-side worktree creation is independent of the
+    child's execution backend, and the returned repository provenance must
+    match the configured source.
+    """
     from tools.delegate_tool import _get_worktree_isolation, _resolve_workspace_hint
-    if not _get_worktree_isolation():
+
+    if not required and not _get_worktree_isolation():
         return None
+
+    from tools import subagent_worktree
+
+    if required:
+        if not source_repo:
+            raise RuntimeError(
+                "specialist workspace isolation requires an explicit source repo"
+            )
+
+        expected_repo = subagent_worktree.resolve_repo_root(source_repo)
+        if not expected_repo:
+            raise RuntimeError(
+                f"specialist workspace source repo is not a git worktree: {source_repo}"
+            )
+
+        info = subagent_worktree.create_subagent_worktree(
+            expected_repo,
+            subagent_id=subagent_id,
+        )
+        if info is None:
+            raise RuntimeError(
+                f"specialist workspace creation failed for source repo: {expected_repo}"
+            )
+
+        actual_repo = subagent_worktree.resolve_repo_root(info.get("repo_root"))
+        if actual_repo != expected_repo:
+            raise RuntimeError(
+                "specialist workspace repo provenance mismatch: "
+                f"expected {expected_repo}, got {actual_repo or info.get('repo_root')}"
+            )
+        return info
+
     with _quiet("worktree isolation setup failed: %s"):
-        from tools import subagent_worktree
         if not subagent_worktree.local_backend_active():
             logger.debug("worktree isolation skipped: non-local terminal backend")
             return None
@@ -326,7 +373,8 @@ def _create_isolated_worktree(parent_agent: Any, parent_task_id: Any, subagent_i
             from tools.terminal_tool import get_session_cwd as _gsc
             _parent_cwd = _gsc(parent_task_id)
         return subagent_worktree.create_subagent_worktree(
-            _parent_cwd or _resolve_workspace_hint(parent_agent), subagent_id=subagent_id,
+            _parent_cwd or _resolve_workspace_hint(parent_agent),
+            subagent_id=subagent_id,
         )
     return None
 
@@ -638,19 +686,53 @@ class _ChildRun:
             record_session_cwd(self.child_task_id, get_session_cwd(self.parent_task_id))
             register_container_alias(self.child_task_id, self.parent_task_id)
 
-        # Semantic specialist execution policy is applied to the child's raw
-        # task identity. Isolation overrides then take precedence over the
-        # ordinary child->parent container alias without changing generic
-        # delegation behavior.
+        # Semantic specialist execution policy determines whether this child
+        # requires contained execution. Contained specialists must first obtain
+        # a proven Working Workspace from the configured Specialist Repo.
+        # Only after that boundary exists may the execution override be
+        # registered for the child's raw task identity.
         from tools.delegate_tool_policy import _specialist_execution_overrides
         execution_overrides = _specialist_execution_overrides(
             getattr(self.child, "semantic_role", None)
         )
-        if execution_overrides is not None:
-            from tools.terminal_tool import register_task_env_overrides
-            register_task_env_overrides(self.child_task_id, execution_overrides)
 
-        self.worktree_info = _create_isolated_worktree(self.parent_agent, self.parent_task_id, self.subagent_id)
+        if execution_overrides is not None:
+            from tools.delegate_tool import _get_specialist_workspace_repo
+
+            try:
+                specialist_repo = _get_specialist_workspace_repo()
+                if not specialist_repo:
+                    raise RuntimeError(
+                        "specialist workspace repo is required for contained execution"
+                    )
+
+                self.worktree_info = _create_isolated_worktree(
+                    self.parent_agent,
+                    self.parent_task_id,
+                    self.subagent_id,
+                    source_repo=specialist_repo,
+                    required=True,
+                )
+            except Exception:
+                # Required specialist workspace setup is transactional: no
+                # execution environment has been registered yet, so roll back
+                # the provisional child cwd/container-alias bookkeeping.
+                from tools.terminal_tool import clear_task_env_overrides
+                clear_task_env_overrides(self.child_task_id)
+                raise
+
+            from tools.terminal_tool import register_task_env_overrides
+            register_task_env_overrides(
+                self.child_task_id,
+                execution_overrides,
+            )
+        else:
+            self.worktree_info = _create_isolated_worktree(
+                self.parent_agent,
+                self.parent_task_id,
+                self.subagent_id,
+            )
+
         if self.worktree_info is not None:
             with _quiet("worktree cwd seed failed: %s"):
                 from tools.terminal_tool import record_session_cwd as _rsc
