@@ -41,6 +41,7 @@ _CONTAINER_KEYS = (
     ("docker_env", {}), ("docker_run_as_host_user", False), ("docker_extra_args", []),
     ("docker_shm_size", "1g"), ("docker_network", True), ("docker_persist_across_processes", True),
     ("docker_shared_container_key", ""), ("docker_orphan_reaper", True), ("docker_snap_compat", False),
+    ("specialist_containment", False),
 )
 _DOCKER_KWARGS = (
     ("volumes", "docker_volumes", []), ("auto_mount_cwd", "docker_mount_cwd_to_workspace", False),
@@ -116,10 +117,45 @@ def _build_docker_env(*, image, cwd, timeout, cc, task_id, host_cwd, **_):
     session_scoped = (_docker_session_isolation_enabled() and task_id != "default"
                       and not _has_isolation_overrides(task_id))
     kwargs = {out: cc.get(key, default) for out, key, default in _DOCKER_KWARGS}
+    resources = _resources(cc)
+
+    specialist_containment = cc.get("specialist_containment") is True
+    if specialist_containment:
+        if resources["cpu"] <= 0 or resources["memory"] <= 0:
+            raise RuntimeError(
+                "Specialist containment requires positive CPU and memory limits."
+            )
+        if not host_cwd:
+            raise RuntimeError(
+                "Specialist containment requires a Working Workspace."
+            )
+
+        kwargs.update({
+            "volumes": [],
+            "auto_mount_cwd": False,
+            "forward_env": [],
+            "env": {},
+            "run_as_host_user": False,
+            "network": False,
+            "extra_args": [],
+            "persist_across_processes": False,
+            "shared_container_key": "",
+            "snap_compat": False,
+        })
+        resources["persistent_filesystem"] = False
+
     if session_scoped:
         kwargs["persist_across_processes"] = False
-    docker_env_obj = _DockerEnvironment(image=image, cwd=cwd, timeout=timeout, task_id=task_id, host_cwd=host_cwd,
-                                        **_resources(cc), **kwargs)
+    docker_env_obj = _DockerEnvironment(
+        image=image,
+        cwd=cwd,
+        timeout=timeout,
+        task_id=task_id,
+        host_cwd=host_cwd,
+        specialist_containment=specialist_containment,
+        **resources,
+        **kwargs,
+    )
     # Marker read by is_persistent_env(): a session-scoped container survives BETWEEN turns (skip
     # per-turn teardown) but is removed at session close / idle timeout. Test doubles may reject attrs.
     if session_scoped:

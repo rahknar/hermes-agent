@@ -11,8 +11,14 @@ from typing import Optional, Set
 
 
 _SPECIALIST_EXECUTION_POLICY = {
-    "analyst": {"env_type": "docker"},
-    "coder": {"env_type": "docker"},
+    "analyst": {
+        "env_type": "docker",
+        "specialist_containment": True,
+    },
+    "coder": {
+        "env_type": "docker",
+        "specialist_containment": True,
+    },
 }
 
 
@@ -41,7 +47,7 @@ _SPECIALIST_TOOL_POLICY = {
 
 def _specialist_execution_overrides(
     semantic_role: Optional[str],
-) -> Optional[dict[str, str]]:
+) -> Optional[dict[str, object]]:
     """Return execution-environment overrides for a specialist role.
 
     None means no recognized execution policy applies. Returned dictionaries

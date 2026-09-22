@@ -514,12 +514,14 @@ class DockerEnvironment(BaseEnvironment):
         persist_across_processes: bool = True,
         shm_size: str = _DEFAULT_SHM_SIZE,
         shared_container_key: str = "",
-        snap_compat: bool = False):
+        snap_compat: bool = False,
+        specialist_containment: bool = False):
         if cwd == "~":
             cwd = "/root"
         super().__init__(cwd=cwd, timeout=timeout)
         self._persistent = persistent_filesystem
         self._persist_across_processes = persist_across_processes
+        self._specialist_containment = bool(specialist_containment)
         # Set by terminal_tool._create_environment for session-scoped containers
         # (docker + container_persistent: false): removed at session close/idle timeout.
         self._session_scoped = False
@@ -540,9 +542,18 @@ class DockerEnvironment(BaseEnvironment):
 
         resource_args = self._resource_args(image, cpu, memory, disk, network, shm_size, extra_args)
         volume_args, writable_args = self._mount_args(volumes, host_cwd, auto_mount_cwd, task_id)
-        volume_args.extend(_readonly_skill_mount_args())
-        egress_label, egress_volume_args, egress_host_args, env_args, validated_extra = (
-            self._egress_and_env_args(extra_args))
+        if not self._specialist_containment:
+            volume_args.extend(_readonly_skill_mount_args())
+        if self._specialist_containment:
+            egress_label = ""
+            egress_volume_args = []
+            egress_host_args = []
+            env_args = []
+            validated_extra = []
+            self._run_env_values = {}
+        else:
+            egress_label, egress_volume_args, egress_host_args, env_args, validated_extra = (
+                self._egress_and_env_args(extra_args))
         volume_args.extend(egress_volume_args)
         user_args = _host_user_args(run_as_host_user)
 
@@ -632,7 +643,19 @@ class DockerEnvironment(BaseEnvironment):
     def _resource_args(self, image, cpu, memory, disk, network, shm_size, extra_args) -> list[str]:
         """cgroup-gated CPU/memory/pids limits, shm size, disk quota and network mode."""
         args: list[str] = []
-        if _cgroup_limits_available(image):
+        if self._specialist_containment and (cpu <= 0 or memory <= 0):
+            raise RuntimeError(
+                "Specialist containment requires positive CPU and memory limits."
+            )
+
+        cgroup_limits = _cgroup_limits_available(image)
+        if self._specialist_containment and not cgroup_limits:
+            raise RuntimeError(
+                "Specialist containment requires enforceable Docker cgroup "
+                "CPU, memory, and PID limits."
+            )
+
+        if cgroup_limits:
             if cpu > 0:
                 args.extend(["--cpus", str(cpu)])
             if memory > 0:
@@ -669,22 +692,32 @@ class DockerEnvironment(BaseEnvironment):
         """``(volume_args, writable_args)`` for user volumes, host cwd and /workspace,/root.
         Persistent mode bind-mounts from TERMINAL_SANDBOX_DIR (default ~/.hermes/sandboxes/)."""
         volume_args: list[str] = []
-        for vol in (volumes or []):
-            if not isinstance(vol, str):
-                logger.warning("Docker volume entry is not a string: %r", vol)
-                continue
-            vol = vol.strip()
-            if not vol:
-                continue
-            if ":" not in vol:
-                logger.warning("Docker volume '%s' missing colon, skipping", vol)
-                continue
-            volume_args.extend(["-v", vol])
+        if not self._specialist_containment:
+            for vol in (volumes or []):
+                if not isinstance(vol, str):
+                    logger.warning("Docker volume entry is not a string: %r", vol)
+                    continue
+                vol = vol.strip()
+                if not vol:
+                    continue
+                if ":" not in vol:
+                    logger.warning("Docker volume '%s' missing colon, skipping", vol)
+                    continue
+                volume_args.extend(["-v", vol])
         workspace_explicitly_mounted = any(":/workspace" in v for v in volume_args)
 
         host_cwd_abs = os.path.abspath(os.path.expanduser(host_cwd)) if host_cwd else ""
+        if self._specialist_containment:
+            if not host_cwd_abs or not os.path.isdir(host_cwd_abs):
+                raise RuntimeError(
+                    "Specialist containment requires a valid Working Workspace directory."
+                )
+            volume_args = ["-v", f"{host_cwd_abs}:/workspace"]
+            workspace_explicitly_mounted = True
+
         bind_host_cwd = (
-            auto_mount_cwd and bool(host_cwd_abs) and os.path.isdir(host_cwd_abs)
+            not self._specialist_containment
+            and auto_mount_cwd and bool(host_cwd_abs) and os.path.isdir(host_cwd_abs)
             and not workspace_explicitly_mounted)
         if auto_mount_cwd and host_cwd and not os.path.isdir(host_cwd_abs):
             logger.debug("Skipping docker cwd mount: host_cwd is not a valid directory: %s", host_cwd)

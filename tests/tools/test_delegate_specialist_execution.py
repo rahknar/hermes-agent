@@ -80,7 +80,13 @@ def test_seed_workspace_registers_docker_override_for_execution_specialist(
     assert run.worktree_info is not None
     assert run.worktree_info["repo_root"] == "/specialist-repo"
     assert registered == [
-        ("sa-test-child", {"env_type": "docker"}),
+        (
+            "sa-test-child",
+            {
+                "env_type": "docker",
+                "specialist_containment": True,
+            },
+        ),
     ]
     assert all(task_id != run.parent_task_id for task_id, _ in registered)
 
@@ -696,7 +702,14 @@ def test_contained_specialist_creates_workspace_before_execution_override(monkey
 
     assert events == [
         ("workspace", "/specialist-repo", True),
-        ("execution", "sa-test-child", {"env_type": "docker"}),
+        (
+            "execution",
+            "sa-test-child",
+            {
+                "env_type": "docker",
+                "specialist_containment": True,
+            },
+        ),
     ]
     assert run.worktree_info is not None
     assert run.worktree_info["repo_root"] == "/specialist-repo"

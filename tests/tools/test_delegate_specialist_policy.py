@@ -172,14 +172,22 @@ def test_semantic_policies_never_grant_delegation_capability():
 def test_specialist_execution_policy_routes_execution_roles_to_docker():
     from tools.delegate_tool_policy import _specialist_execution_overrides
 
-    assert _specialist_execution_overrides("analyst") == {"env_type": "docker"}
-    assert _specialist_execution_overrides("coder") == {"env_type": "docker"}
+    expected = {
+        "env_type": "docker",
+        "specialist_containment": True,
+    }
+
+    assert _specialist_execution_overrides("analyst") == expected
+    assert _specialist_execution_overrides("coder") == expected
 
 
 def test_specialist_execution_policy_normalizes_role_name():
     from tools.delegate_tool_policy import _specialist_execution_overrides
 
-    assert _specialist_execution_overrides("  AnAlYsT  ") == {"env_type": "docker"}
+    assert _specialist_execution_overrides("  AnAlYsT  ") == {
+        "env_type": "docker",
+        "specialist_containment": True,
+    }
 
 
 def test_specialist_execution_policy_does_not_sandbox_nonexecution_specialists():
@@ -207,8 +215,13 @@ def test_specialist_execution_policy_returns_detached_copy():
 
     first["env_type"] = "local"
 
-    assert second == {"env_type": "docker"}
-    assert _specialist_execution_overrides("analyst") == {"env_type": "docker"}
+    expected = {
+        "env_type": "docker",
+        "specialist_containment": True,
+    }
+
+    assert second == expected
+    assert _specialist_execution_overrides("analyst") == expected
 
 
 # -------------------------------------------------------------------------
