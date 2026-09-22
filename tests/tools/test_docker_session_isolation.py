@@ -230,8 +230,10 @@ class TestRecordedHostCwdDiscardedOnContainers:
     def test_host_record_discarded_for_docker(self):
         terminal_tool.record_session_cwd("sess-1", "/Users/me/dev/repo")
         cwd = terminal_tool._resolve_command_cwd(
-            workdir=None, default_cwd="/workspace",
-            session_key="sess-1", env_type="docker",
+            workdir=None,
+            default_cwd="/workspace",
+            session_key="sess-1",
+            env_type="docker",
         )
         assert cwd == "/workspace"
 
@@ -239,24 +241,30 @@ class TestRecordedHostCwdDiscardedOnContainers:
         """A legitimate in-container cd is the session's state — keep it."""
         terminal_tool.record_session_cwd("sess-1", "/workspace/subdir")
         cwd = terminal_tool._resolve_command_cwd(
-            workdir=None, default_cwd="/workspace",
-            session_key="sess-1", env_type="docker",
+            workdir=None,
+            default_cwd="/workspace",
+            session_key="sess-1",
+            env_type="docker",
         )
         assert cwd == "/workspace/subdir"
 
     def test_host_record_kept_for_local_backend(self):
         terminal_tool.record_session_cwd("sess-1", "/home/me/project")
         cwd = terminal_tool._resolve_command_cwd(
-            workdir=None, default_cwd="/anything",
-            session_key="sess-1", env_type="local",
+            workdir=None,
+            default_cwd="/anything",
+            session_key="sess-1",
+            env_type="local",
         )
         assert cwd == "/home/me/project"
 
     def test_explicit_workdir_still_wins(self):
         terminal_tool.record_session_cwd("sess-1", "/workspace/a")
         cwd = terminal_tool._resolve_command_cwd(
-            workdir="/workspace/b", default_cwd="/workspace",
-            session_key="sess-1", env_type="docker",
+            workdir="/workspace/b",
+            default_cwd="/workspace",
+            session_key="sess-1",
+            env_type="docker",
         )
         assert cwd == "/workspace/b"
 
@@ -264,9 +272,49 @@ class TestRecordedHostCwdDiscardedOnContainers:
         """Callers that don't pass env_type (legacy sites) are unchanged."""
         terminal_tool.record_session_cwd("sess-1", "/home/me/project")
         cwd = terminal_tool._resolve_command_cwd(
-            workdir=None, default_cwd="/fallback", session_key="sess-1",
+            workdir=None,
+            default_cwd="/fallback",
+            session_key="sess-1",
         )
         assert cwd == "/home/me/project"
+
+    def test_tmp_record_preserved_for_generic_docker(self):
+        terminal_tool.record_session_cwd("sess-generic", "/tmp/project")
+        cwd = terminal_tool._resolve_command_cwd(
+            workdir=None,
+            default_cwd="/workspace",
+            session_key="sess-generic",
+            env_type="docker",
+        )
+        assert cwd == "/tmp/project"
+
+    def test_tmp_record_discarded_for_contained_specialist(self):
+        terminal_tool.record_session_cwd(
+            "sess-contained",
+            "/tmp/specialist-worktree",
+        )
+        cwd = terminal_tool._resolve_command_cwd(
+            workdir=None,
+            default_cwd="/workspace",
+            session_key="sess-contained",
+            env_type="docker",
+            specialist_containment=True,
+        )
+        assert cwd == "/workspace"
+
+    def test_container_cd_preserved_for_contained_specialist(self):
+        terminal_tool.record_session_cwd(
+            "sess-contained-subdir",
+            "/workspace/subdir",
+        )
+        cwd = terminal_tool._resolve_command_cwd(
+            workdir=None,
+            default_cwd="/workspace",
+            session_key="sess-contained-subdir",
+            env_type="docker",
+            specialist_containment=True,
+        )
+        assert cwd == "/workspace/subdir"
 
 
 class TestSessionScopedContainerLifecycle:

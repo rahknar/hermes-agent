@@ -815,6 +815,7 @@ def _resolve_command_cwd(
     default_cwd: str,
     session_key: Optional[str] = None,
     env_type: Optional[str] = None,
+    specialist_containment: bool = False,
 ) -> str:
     """cwd for a command: explicit ``workdir`` > the session's own cwd record >
     ``default_cwd``.
@@ -829,14 +830,33 @@ def _resolve_command_cwd(
     """
     if workdir:
         return workdir
+
     recorded = get_session_cwd(session_key)
-    if recorded and _is_container_backend(env_type) and _is_unusable_container_cwd(recorded):
-        logger.info(
-            "Ignoring recorded session cwd %r for %s backend "
-            "(host/relative path won't work in sandbox). Using %r instead.",
-            recorded, env_type, default_cwd,
-        )
-        return default_cwd
+
+    if recorded and _is_container_backend(env_type):
+        if specialist_containment:
+            # A contained specialist has exactly one host-backed Working
+            # Workspace, mounted at /workspace.  Never pass an inherited host
+            # cwd into the container namespace.
+            if not recorded.startswith(("/workspace", "/root")):
+                logger.info(
+                    "Ignoring recorded host cwd %r for contained specialist "
+                    "%s backend. Using %r instead.",
+                    recorded,
+                    env_type,
+                    default_cwd,
+                )
+                return default_cwd
+        elif _is_unusable_container_cwd(recorded):
+            logger.info(
+                "Ignoring recorded session cwd %r for %s backend "
+                "(host/relative path won't work in sandbox). Using %r instead.",
+                recorded,
+                env_type,
+                default_cwd,
+            )
+            return default_cwd
+
     return recorded or default_cwd
 
 
@@ -995,15 +1015,25 @@ def _plan_execution(
     # `docker run -w` and fail with exit 125. Re-apply the guard to the
     # resolved cwd; when the host path IS this session's mounted workspace,
     # remap to /workspace instead of discarding it.
-    if _is_container_backend(env_type) and _is_unusable_container_cwd(cwd):
-        remapped = "/workspace" if host_cwd else config["cwd"]
-        if cwd != remapped:
+    if _is_container_backend(env_type):
+        if host_cwd and cwd == host_cwd:
             logger.info(
-                "Remapping host/relative cwd override %r for %s backend "
-                "(won't exist in sandbox). Using %r instead.",
-                cwd, env_type, remapped,
+                "Remapping mounted host cwd %r for %s backend to /workspace.",
+                cwd,
+                env_type,
             )
-        cwd = remapped
+            cwd = "/workspace"
+        elif _is_unusable_container_cwd(cwd):
+            remapped = config["cwd"]
+            if cwd != remapped:
+                logger.info(
+                    "Remapping host/relative cwd override %r for %s backend "
+                    "(won't exist in sandbox). Using %r instead.",
+                    cwd,
+                    env_type,
+                    remapped,
+                )
+            cwd = remapped
     # Reject non-positive timeouts before deadline math: ``timeout or
     # default`` would silently turn 0 into the default, and a negative
     # value is truthy and would fire an immediate "-Ns" timeout.
@@ -1139,7 +1169,13 @@ def _run_foreground(
     for retry_count in range(max_retries + 1):
         try:
             command_cwd = _resolve_command_cwd(
-                workdir=workdir, default_cwd=plan.cwd, session_key=session_key, env_type=env_type,
+                workdir=workdir,
+                default_cwd=plan.cwd,
+                session_key=session_key,
+                env_type=env_type,
+                specialist_containment=(
+                    resolve_task_overrides(task_id).get("specialist_containment") is True
+                ),
             )
             # bounded_capture: model-facing output keeps a head/tail window
             # while streaming so a verbose command can't OOM the gateway;

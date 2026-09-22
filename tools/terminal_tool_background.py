@@ -139,11 +139,20 @@ def spawn_background_process(
     """
     from tools.process_registry import process_registry
     from tools.terminal_tool import (
-        _redact_terminal_error_text, _resolve_command_cwd, _resolve_notification_flag_conflict,
+        _redact_terminal_error_text,
+        _resolve_command_cwd,
+        _resolve_notification_flag_conflict,
+        resolve_task_overrides,
     )
 
     effective_cwd = _resolve_command_cwd(
-        workdir=workdir, default_cwd=cwd, session_key=session_key, env_type=env_type,
+        workdir=workdir,
+        default_cwd=cwd,
+        session_key=session_key,
+        env_type=env_type,
+        specialist_containment=(
+            resolve_task_overrides(task_id).get("specialist_containment") is True
+        ),
     )
     try:
         proc_session = _spawn(

@@ -321,3 +321,37 @@ def test_safe_getcwd_falls_back_to_home_when_no_terminal_cwd(monkeypatch):
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
     monkeypatch.setattr(terminal_tool.os.path, "expanduser", lambda p: "/home/me")
     assert terminal_tool._safe_getcwd() == "/home/me"
+
+
+def test_plan_remaps_mounted_tmp_host_cwd_to_workspace(monkeypatch, tmp_path):
+    """A mounted host cwd maps to /workspace even when its path looks container-valid."""
+    from tools import terminal_tool
+
+    task_id = "sa-contained-plan-test"
+    workspace = tmp_path / "specialist-worktree"
+    workspace.mkdir()
+
+    terminal_tool.register_task_env_overrides(
+        task_id,
+        {
+            "env_type": "docker",
+            "specialist_containment": True,
+            "cwd": str(workspace),
+            "cwd_source": "session",
+        },
+    )
+
+    try:
+        plan = terminal_tool._plan_execution(
+            "pwd",
+            task_id=task_id,
+            timeout=None,
+            background=False,
+            _host_local=False,
+        )
+
+        assert plan.env_type == "docker"
+        assert plan.host_cwd == str(workspace)
+        assert plan.cwd == "/workspace"
+    finally:
+        terminal_tool.clear_task_env_overrides(task_id)
