@@ -721,6 +721,10 @@ class _ChildRun:
                 clear_task_env_overrides(self.child_task_id)
                 raise
 
+            execution_overrides = dict(execution_overrides)
+            execution_overrides["cwd"] = self.worktree_info["path"]
+            execution_overrides["cwd_source"] = "session"
+
             from tools.terminal_tool import register_task_env_overrides
             register_task_env_overrides(
                 self.child_task_id,

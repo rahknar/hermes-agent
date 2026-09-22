@@ -531,19 +531,36 @@ def _resolve_task_host_cwd(config: Dict[str, Any], task_id: Optional[str]) -> Op
     ``cwd_source: "session"`` or untagged (ACP/RL) overrides mount.
     """
     env_type = resolve_task_env_type(task_id, config)
-    if env_type != "docker" or not config.get("docker_mount_cwd_to_workspace"):
+    if env_type != "docker":
         return None
-    # Top-level CLI parent ("default") is a single-session process — legacy behavior.
-    if not _docker_session_isolation_enabled() or _resolve_container_task_id(task_id) == "default":
-        return config.get("host_cwd")
+
     overrides = resolve_task_overrides(task_id)
+    specialist_containment = overrides.get("specialist_containment") is True
+
+    if not specialist_containment:
+        if not config.get("docker_mount_cwd_to_workspace"):
+            return None
+
+        # Top-level CLI parent ("default") is a single-session process — legacy behavior.
+        if (
+            not _docker_session_isolation_enabled()
+            or _resolve_container_task_id(task_id) == "default"
+        ):
+            return config.get("host_cwd")
+
     candidate = overrides.get("cwd")
-    if overrides.get("cwd_source") == "process" or not isinstance(candidate, str) or not candidate.strip():
+    if (
+        overrides.get("cwd_source") == "process"
+        or not isinstance(candidate, str)
+        or not candidate.strip()
+    ):
         return None
+
     candidate = os.path.abspath(os.path.expanduser(candidate))
-    # Must exist on the host and not already be an in-container path.
+
     if not os.path.isdir(candidate) or candidate.startswith(("/workspace", "/root")):
         return None
+
     return candidate
 
 
@@ -1066,16 +1083,25 @@ def _acquire_env(plan: _ExecPlan, task_id: Optional[str]) -> Any:
         logger.info("Creating new %s environment for task %s...", env_type, eff[:8])
         try:
             new_env = _create_configured_env(
-                plan.config, env_type, image=plan.image, cwd=plan.cwd,
-                timeout=plan.effective_timeout, task_id=eff, host_cwd=plan.host_cwd,
+                plan.config,
+                env_type,
+                image=plan.image,
+                cwd=plan.cwd,
+                timeout=plan.effective_timeout,
+                task_id=eff,
+                host_cwd=plan.host_cwd,
                 local_config=(
                     {"persistent": plan.config.get("local_persistent", False)}
-                    if env_type == "local" else None
+                    if env_type == "local"
+                    else None
                 ),
+                execution_overrides=resolve_task_overrides(task_id),
             )
         except ImportError as e:
             raise _Rejected(_error_json(
-                _redact_terminal_error_text(f"Terminal tool disabled: environment creation failed ({e})"),
+                _redact_terminal_error_text(
+                    f"Terminal tool disabled: environment creation failed ({e})"
+                ),
                 status="disabled",
             ))
 

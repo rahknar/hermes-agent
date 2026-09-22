@@ -47,6 +47,160 @@ def test_specialist_containment_reaches_container_config():
     assert container_config["specialist_containment"] is True
 
 
+def test_create_configured_env_transports_specialist_containment(monkeypatch):
+    """Task-level specialist containment must reach backend container config."""
+    from tools import terminal_tool_lifecycle as lifecycle
+    from tools import terminal_tool_backends as backends
+
+    captured = {}
+
+    def fake_create_environment(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        backends,
+        "_create_environment",
+        fake_create_environment,
+    )
+
+    lifecycle._create_configured_env(
+        {
+            "env_type": "local",
+            "container_cpu": 1,
+            "container_memory": 5120,
+            "specialist_containment": False,
+        },
+        "docker",
+        image="specialist-image",
+        cwd="/workspace",
+        timeout=300,
+        task_id="sa-contained-child",
+        host_cwd="/trusted/specialist-worktree",
+        execution_overrides={
+            "env_type": "docker",
+            "specialist_containment": True,
+            "cwd": "/trusted/specialist-worktree",
+            "cwd_source": "session",
+        },
+    )
+
+    assert captured["env_type"] == "docker"
+    assert captured["host_cwd"] == "/trusted/specialist-worktree"
+    assert captured["container_config"]["specialist_containment"] is True
+
+
+def test_acquire_env_transports_task_execution_overrides(monkeypatch):
+    """Terminal acquisition must carry task containment into env creation."""
+    from tools import terminal_tool
+
+    task_id = "sa-contained-acquire"
+    captured = {}
+    fake_env = object()
+
+    terminal_tool.register_task_env_overrides(
+        task_id,
+        {
+            "env_type": "docker",
+            "specialist_containment": True,
+            "cwd": "/trusted/specialist-worktree",
+            "cwd_source": "session",
+        },
+    )
+
+    def fake_create(config, env_type, **kwargs):
+        captured["config"] = config
+        captured["env_type"] = env_type
+        captured.update(kwargs)
+        return fake_env
+
+    monkeypatch.setattr(
+        terminal_tool,
+        "_create_configured_env",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        terminal_tool,
+        "_start_cleanup_thread",
+        lambda: None,
+    )
+
+    plan = terminal_tool._ExecPlan(
+        config={
+            "env_type": "local",
+            "local_persistent": False,
+        },
+        env_type="docker",
+        effective_task_id=task_id,
+        image="specialist-image",
+        cwd="/workspace",
+        host_cwd="/trusted/specialist-worktree",
+        effective_timeout=300,
+        promoted_from_foreground_timeout=None,
+    )
+
+    try:
+        env = terminal_tool._acquire_env(plan, task_id)
+
+        assert env is fake_env
+        assert captured["env_type"] == "docker"
+        assert captured["task_id"] == task_id
+        assert captured["host_cwd"] == "/trusted/specialist-worktree"
+
+        assert captured["execution_overrides"] == {
+            "env_type": "docker",
+            "specialist_containment": True,
+            "cwd": "/trusted/specialist-worktree",
+            "cwd_source": "session",
+        }
+    finally:
+        with terminal_tool._env_lock:
+            terminal_tool._active_environments.pop(task_id, None)
+            terminal_tool._last_activity.pop(task_id, None)
+
+        with terminal_tool._creation_locks_lock:
+            terminal_tool._creation_locks.pop(task_id, None)
+
+        terminal_tool.clear_task_env_overrides(task_id)
+
+
+def test_strict_specialist_resolves_proven_workspace_when_generic_mount_disabled(
+    monkeypatch,
+    tmp_path,
+):
+    """Strict containment requires its proven workspace independent of generic cwd mounting."""
+    from tools import terminal_tool
+
+    task_id = "sa-contained-child"
+    workspace = tmp_path / "specialist-worktree"
+    workspace.mkdir()
+
+    config = {
+        "env_type": "local",
+        "cwd": str(tmp_path),
+        "host_cwd": None,
+        "docker_mount_cwd_to_workspace": False,
+    }
+
+    terminal_tool.register_task_env_overrides(
+        task_id,
+        {
+            "env_type": "docker",
+            "specialist_containment": True,
+            "cwd": str(workspace),
+            "cwd_source": "session",
+        },
+    )
+
+    try:
+        assert terminal_tool._resolve_task_host_cwd(
+            config,
+            task_id,
+        ) == str(workspace)
+    finally:
+        terminal_tool.clear_task_env_overrides(task_id)
+
+
 def test_specialist_containment_forces_strict_docker_constructor_policy(monkeypatch):
     """Contained specialists must not inherit permissive generic Docker settings."""
     from tools import terminal_tool_backends as backends

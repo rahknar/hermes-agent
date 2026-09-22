@@ -66,16 +66,23 @@ def _check_disk_usage_warning():
 def _create_configured_env(
     config: Dict[str, Any], env_type: str, *, image: str, cwd: str, timeout: int,
     task_id: str, host_cwd: Optional[str], local_config: Optional[dict] = None,
+    execution_overrides: Optional[Dict[str, Any]] = None,
 ):
-    """``_create_environment`` with the ssh/container kwargs shaped from *config*
-    (shared by the terminal tool and the lazy :func:`ensure_task_env` bring-up)."""
+    """`_create_environment` with backend kwargs shaped from effective config."""
     from tools.terminal_tool_backends import _create_environment
     from tools.terminal_tool_config import _is_container_backend
+
+    effective_config = config
+    if execution_overrides and execution_overrides.get("specialist_containment") is True:
+        effective_config = dict(config)
+        effective_config["specialist_containment"] = True
+
     return _create_environment(
         env_type=env_type, image=image, cwd=cwd, timeout=timeout,
-        ssh_config=_ssh_config_from_config(config) if env_type == "ssh" else None,
+        ssh_config=_ssh_config_from_config(effective_config) if env_type == "ssh" else None,
         container_config=(
-            _container_config_from_config(config) if _is_container_backend(env_type) else None
+            _container_config_from_config(effective_config)
+            if _is_container_backend(env_type) else None
         ),
         local_config=local_config, task_id=task_id, host_cwd=host_cwd,
     )
@@ -196,12 +203,23 @@ def ensure_task_env(task_id: Optional[str] = None):
     bring the env up on demand, reusing the same creation machinery as the terminal tool.
     """
     from tools.terminal_tool import (
-        _active_environments, _creation_locks, _creation_locks_lock, _env_lock,
-        _get_env_config, _last_activity, _resolve_container_task_id,
-        _resolve_task_host_cwd, _select_image, _start_cleanup_thread, resolve_task_overrides,
+        _active_environments,
+        _creation_locks,
+        _creation_locks_lock,
+        _env_lock,
+        _get_env_config,
+        _last_activity,
+        _resolve_container_task_id,
+        _resolve_task_host_cwd,
+        _select_image,
+        _start_cleanup_thread,
+        resolve_task_env_type,
+        resolve_task_overrides,
     )
     config = _get_env_config()
-    env_type = config["env_type"]
+    overrides = resolve_task_overrides(task_id)
+    env_type = resolve_task_env_type(task_id, config)
+
     if env_type == "local":
         return None
 
@@ -213,7 +231,7 @@ def ensure_task_env(task_id: Optional[str] = None):
             _last_activity[effective_task_id] = time.time()
         return existing
 
-    image = _select_image(env_type, resolve_task_overrides(task_id), config)
+    image = _select_image(env_type, overrides, config)
 
     _start_cleanup_thread()
 
@@ -229,6 +247,7 @@ def ensure_task_env(task_id: Optional[str] = None):
                 config, env_type, image=image, cwd=config["cwd"],
                 timeout=config["timeout"], task_id=effective_task_id,
                 host_cwd=_resolve_task_host_cwd(config, task_id),
+                execution_overrides=overrides,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort bring-up
             logger.warning(

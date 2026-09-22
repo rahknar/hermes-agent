@@ -287,6 +287,7 @@ def _create_terminal_env_for_file_ops(raw_task_id: str, task_id: str):
         timeout=config["timeout"], task_id=task_id,
         host_cwd=_resolve_task_host_cwd(config, raw_task_id),
         local_config={"persistent": config.get("local_persistent", False)} if env_type == "local" else None,
+        execution_overrides=overrides,
     )
     return env_type, terminal_env
 

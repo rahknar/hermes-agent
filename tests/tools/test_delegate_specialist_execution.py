@@ -85,6 +85,8 @@ def test_seed_workspace_registers_docker_override_for_execution_specialist(
             {
                 "env_type": "docker",
                 "specialist_containment": True,
+                "cwd": "/specialist-repo/.worktrees/subagent-sa-test-child",
+                "cwd_source": "session",
             },
         ),
     ]
@@ -708,6 +710,8 @@ def test_contained_specialist_creates_workspace_before_execution_override(monkey
             {
                 "env_type": "docker",
                 "specialist_containment": True,
+                "cwd": "/specialist-repo/.worktrees/subagent-sa-test-child",
+                "cwd_source": "session",
             },
         ),
     ]
