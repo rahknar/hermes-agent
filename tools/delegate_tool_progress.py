@@ -139,21 +139,25 @@ _ORCHESTRATOR_BLOCK = (
     "for the final summary, not your workers.\n\n"
 )
 _LEAF_CHILDREN_NOTE = (
-    "Your own children MUST be leaves (cannot delegate further) because they would be at the depth floor — you cannot "
-    "pass role='orchestrator' to your own delegate_task calls."
+    "Your own children will be leaves (cannot delegate further) because they would be at the depth floor."
 )
+
 _NESTED_CHILDREN_NOTE = (
-    "Your own children can themselves be orchestrators or leaves, depending on the `role` you pass to delegate_task. "
-    "Default is 'leaf'; pass role='orchestrator' explicitly when a child needs to further decompose its work."
+    "Your own children receive delegation capability automatically when depth budget remains. "
+    "Do not try to select that capability in delegate_task; it is derived from delegation depth."
 )
 
 def _build_child_system_prompt(
     goal: str, context: Optional[str] = None, *, workspace_path: Optional[str] = None, role: str = "leaf",
     max_spawn_depth: int = 2, child_depth: int = 1, semantic_role: Optional[str] = None,
 ) -> str:
-    """Focused system prompt for a child agent. role='orchestrator' appends a delegation-capability block (modeled on
-    OpenClaw's buildSubagentSystemPrompt); its depth note is literal truth grounded in the passed config so the LLM
-    can't confabulate nesting."""
+    """Focused system prompt for a child agent.
+
+    ``role`` is the already-resolved, depth-derived capability role supplied by
+    the caller; it is not model-facing role selection. An orchestrator-capable
+    child receives the delegation block, whose depth note reflects the configured
+    spawn-depth boundary.
+    """
     parts = ["You are a focused subagent working on a specific delegated task."]
 
     semantic_contract = get_role_contract(semantic_role)

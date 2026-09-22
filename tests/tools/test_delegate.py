@@ -576,6 +576,8 @@ class TestStripBlockedTools(unittest.TestCase):
             patch("tools.delegate_tool._get_max_spawn_depth", return_value=2),
         ):
             MockAgent.return_value = MagicMock()
+            # Internal resolved capability: depth derivation has already selected
+            # orchestrator before _build_child_agent is called.
             _build_child_agent(
                 task_index=0,
                 goal="Coordinate safely",
@@ -2135,17 +2137,17 @@ class TestMaxSpawnDepth(unittest.TestCase):
         self.assertTrue(any("below floor 1" in m for m in cm.output))
 
 # =========================================================================
-# role param plumbing
+# legacy role compatibility + depth-derived capability
 # =========================================================================
 #
-# These tests cover the schema + signature + stash plumbing of the role
-# param.  The full role-honoring behavior (toolset re-add, role-aware
-# prompt) lives in TestOrchestratorRoleBehavior below; these tests only
-# assert on _delegate_role stashing and on the schema shape.
+# `role` is no longer an advertised caller control.  The handler still
+# accepts the legacy argument for wire compatibility, but delegation
+# capability is derived from child depth and max_spawn_depth.  These tests
+# pin that compatibility boundary and the resulting _delegate_role state.
 
 
-class TestOrchestratorRoleSchema(unittest.TestCase):
-    """Tests that the role param reaches the child via dispatch."""
+class TestDelegationCapabilityCompatibility(unittest.TestCase):
+    """Tests the legacy role compatibility boundary and depth-derived capability."""
 
     @patch("tools.delegate_tool._resolve_delegation_credentials")
     @patch("tools.delegate_tool._load_config",
@@ -2208,9 +2210,8 @@ _SENTINEL = object()
 
 
 # =========================================================================
-# role-honoring behavior
+# Depth-derived orchestration behavior
 # =========================================================================
-
 
 def _make_role_mock_child():
     """Helper: mock child with minimal fields for delegate_task to process."""
@@ -2228,18 +2229,16 @@ def _make_role_mock_child():
 
 
 class TestOrchestratorRoleBehavior(unittest.TestCase):
-    """Tests that role='orchestrator' actually changes toolset + prompt."""
+    """Tests that delegation capability is derived from spawn depth."""
 
     @patch("tools.delegate_tool._resolve_delegation_credentials")
     @patch("tools.delegate_tool._load_config",
            return_value={"max_spawn_depth": 2})
-    def test_orchestrator_role_keeps_delegation_at_depth_1(
+    def test_depth_budget_enables_delegation_at_depth_1(
         self, mock_cfg, mock_creds
     ):
-        """role='orchestrator' + depth-0 parent with max_spawn_depth=2 →
-        child at depth 1 gets 'delegation' in enabled_toolsets (can
-        further delegate).  Requires max_spawn_depth>=2 since the new
-        default is 1 (flat)."""
+        """A depth-0 parent with max_spawn_depth=2 creates a depth-1
+        orchestrator-capable child automatically."""
         mock_creds.return_value = {
             "provider": None, "base_url": None,
             "api_key": None, "api_mode": None, "model": None,
@@ -2249,7 +2248,7 @@ class TestOrchestratorRoleBehavior(unittest.TestCase):
         with patch("run_agent.AIAgent") as MockAgent:
             mock_child = _make_role_mock_child()
             MockAgent.return_value = mock_child
-            delegate_task(goal="test", role="orchestrator", parent_agent=parent)
+            delegate_task(goal="test", parent_agent=parent)
             kwargs = MockAgent.call_args[1]
             self.assertIn("delegation", kwargs["enabled_toolsets"])
             self.assertEqual(mock_child._delegate_role, "orchestrator")
@@ -2257,11 +2256,11 @@ class TestOrchestratorRoleBehavior(unittest.TestCase):
     @patch("tools.delegate_tool._resolve_delegation_credentials")
     @patch("tools.delegate_tool._load_config",
            return_value={"max_spawn_depth": 2})
-    def test_orchestrator_blocked_at_max_spawn_depth(
+    def test_depth_floor_disables_delegation_at_depth_2(
         self, mock_cfg, mock_creds
     ):
-        """Parent at depth 1 with max_spawn_depth=2 spawns child
-        at depth 2 (the floor); role='orchestrator' degrades to leaf."""
+        """A depth-1 parent with max_spawn_depth=2 creates a depth-2
+        leaf because no further spawn-depth budget remains."""
         mock_creds.return_value = {
             "provider": None, "base_url": None,
             "api_key": None, "api_mode": None, "model": None,
@@ -2271,32 +2270,34 @@ class TestOrchestratorRoleBehavior(unittest.TestCase):
         with patch("run_agent.AIAgent") as MockAgent:
             mock_child = _make_role_mock_child()
             MockAgent.return_value = mock_child
-            delegate_task(goal="test", role="orchestrator", parent_agent=parent)
+            delegate_task(goal="test", parent_agent=parent)
             kwargs = MockAgent.call_args[1]
             self.assertNotIn("delegation", kwargs["enabled_toolsets"])
             self.assertEqual(mock_child._delegate_role, "leaf")
 
 
-    # ── Role-aware system prompt ────────────────────────────────────────
+    # ── Depth-derived capability system prompt ─────────────────────────
 
-    def test_orchestrator_prompt_mentions_delegation_capability(self):
+    def test_orchestrator_prompt_mentions_depth_derived_delegation_capability(self):
         prompt = _build_child_system_prompt(
             "Survey approaches", role="orchestrator",
             max_spawn_depth=2, child_depth=1,
         )
         self.assertIn("delegate_task", prompt)
         self.assertIn("Orchestrator Role", prompt)
-        # Depth/max-depth note present and literal:
         self.assertIn("depth 1", prompt)
         self.assertIn("max_spawn_depth=2", prompt)
+        self.assertIn("depth floor", prompt)
+        self.assertNotIn("pass role='orchestrator'", prompt)
 
 
 class TestOrchestratorEndToEnd(unittest.TestCase):
     """End-to-end: parent -> orchestrator -> two-leaf nested orchestration.
 
-    Covers the acceptance gate: parent delegates to an orchestrator
-    child; the orchestrator delegates to two leaf grandchildren; the
-    role/toolset/depth chain all resolve correctly.
+    Covers the acceptance gate: the parent delegates to a child that
+    receives orchestration capability from its remaining depth budget;
+    that child delegates to two grandchildren at the depth floor.
+    The depth/capability/toolset/prompt chain must all resolve correctly.
 
     Mock strategy: a single AIAgent patch with a side_effect factory
     that keys on the child's ephemeral_system_prompt — orchestrator
@@ -2318,7 +2319,7 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
         parent = _make_mock_parent(depth=0)
         parent.enabled_toolsets = ["terminal", "file", "delegation"]
 
-        # (enabled_toolsets, _delegate_role) for each agent built
+        # Effective toolset and prompt-derived capability for each agent built.
         built_agents: list = []
         # Keep the orchestrator mock around so the re-entrant delegate_task
         # can reach it via closure.
@@ -2377,16 +2378,18 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
         with patch("run_agent.AIAgent", side_effect=_factory) as MockAgent:
             delegate_task(
                 goal="top-level orchestration",
-                role="orchestrator",
                 parent_agent=parent,
             )
 
-        # 1 orchestrator + 2 leaf grandchildren = 3 agents
+        # 1 depth-derived orchestrator + 2 leaf grandchildren = 3 agents
         self.assertEqual(MockAgent.call_count, 3)
-        # First built = the orchestrator (parent's direct child)
+
+        # First built = parent's direct child, with orchestration capability
+        # because depth budget remains.
         self.assertIn("delegation", built_agents[0]["enabled_toolsets"])
         self.assertTrue(built_agents[0]["is_orchestrator_prompt"])
-        # Next two = leaves (grandchildren)
+
+        # Next two = grandchildren at the depth floor, therefore leaves.
         self.assertNotIn("delegation", built_agents[1]["enabled_toolsets"])
         self.assertFalse(built_agents[1]["is_orchestrator_prompt"])
         self.assertNotIn("delegation", built_agents[2]["enabled_toolsets"])
